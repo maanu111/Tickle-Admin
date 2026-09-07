@@ -19,6 +19,7 @@ import {
   usePagination,
 } from "@/components/ui/pagination";
 import { useLoadOnMount } from "@/lib/useLoadOnMount";
+import { isOnline } from "@/lib/presence";
 import {
   ArrowLeft,
   Heart,
@@ -42,7 +43,6 @@ type Profile = {
   search_radius: number | null;
   latitude: number | null;
   longitude: number | null;
-  is_online: boolean | null;
   last_active: string | null;
   interested_in: string | null;
   suspended_at: string | null;
@@ -59,7 +59,7 @@ type RelatedProfile = {
   photos: string[] | null;
   age: number | null;
   gender: string | null;
-  is_online: boolean | null;
+  last_active: string | null;
 };
 
 type LikeRow = {
@@ -402,8 +402,10 @@ export default function MemberProfilePage() {
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[0.92rem] text-muted-foreground">
               <span>{profile.email || authUser?.email || "No email"}</span>
-              <Badge variant={profile.is_online ? "default" : "secondary"}>
-                {profile.is_online ? "Online" : "Offline"}
+              {/* From the heartbeat, not the is_online column — that was a
+                  latch nothing ever cleared. See lib/presence. */}
+              <Badge variant={isOnline(profile.last_active) ? "default" : "secondary"}>
+                {isOnline(profile.last_active) ? "Online" : "Offline"}
               </Badge>
             </div>
           </div>

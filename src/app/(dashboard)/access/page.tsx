@@ -36,6 +36,14 @@ type AdminProfile = {
   id: string;
   email: string;
   role: "admin";
+  /*
+   * Which role they hold, which the table never showed.
+   *
+   * It listed Created and Updated instead — two timestamps nobody
+   * decides anything from — while the one fact you open this screen to
+   * check, whether somebody is a super admin, was not on it at all.
+   */
+  role_key: string | null;
   display_name: string | null;
   avatar_url: string | null;
   created_at: string | null;
@@ -96,9 +104,10 @@ const TABS: { value: Tab; label: string }[] = [
 /** One line per tab, so landing on one you did not pick still explains itself. */
 const BLURB: Record<Tab, string> = {
   people:
-    "Everybody with a login here. Adding somebody emails them an invitation.",
-  roles: "What each role can do, and who has which one.",
-  history: "Every change, who made it and when.",
+    "Everybody who can sign into this panel. Adding somebody emails them an invitation; removing somebody takes their access away at once and leaves their member account alone.",
+  roles:
+    "What each role is allowed to do. Change a role and it changes for everybody who holds it.",
+  history: "Every change made in this panel, by whom, and when.",
 };
 
 function AccessView() {
@@ -144,7 +153,7 @@ function AccessView() {
     // page whose job is listing everyone else.
     const { data, error } = await adminTable<AdminProfile>("admin_profiles", {
       select:
-        "id, email, role, display_name, avatar_url, created_at, updated_at",
+        "id, email, role, role_key, display_name, avatar_url, created_at, updated_at",
       eq: ["role", "admin"],
       order: "updated_at",
     });
@@ -160,14 +169,6 @@ function AccessView() {
   }, [supabase]);
 
   useLoadOnMount(loadAdmins);
-
-  const summary = useMemo(
-    () => ({
-      total: profiles.length,
-      newest: profiles[0]?.updated_at ?? null,
-    }),
-    [profiles],
-  );
 
   const handleReset = () => {
     setForm(emptyForm);
@@ -302,29 +303,15 @@ function AccessView() {
 
       {tab === "people" && (
         <>
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card className="border-foreground/[0.06] bg-card">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-[0.92rem] font-medium text-muted-foreground">
-                  Admins
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="tnum text-[1.9rem] font-light tracking-tight">
-                {summary.total}
-              </CardContent>
-            </Card>
-            <Card className="border-foreground/[0.06] bg-card">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-[0.92rem] font-medium text-muted-foreground">
-                  Last Updated
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="font-mono text-[0.92rem] text-muted-foreground">
-                {formatDateTime(summary.newest)}
-              </CardContent>
-            </Card>
-          </div>
+          {/*
+            The two stat cards are gone.
 
+            They gave a quarter of the screen to "Admins: 2" and a
+            timestamp — a number you can count by looking at the list
+            directly beneath it, and a date nobody decides anything
+            from. The count now sits in the sentence above the table,
+            where it costs a word instead of a card.
+          */}
           <div className="grid gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
             <Card className="border-foreground/[0.06] bg-card">
               <CardHeader>
@@ -403,18 +390,20 @@ function AccessView() {
               <Table>
                 <TableHeader>
                   <TableRow className="border-foreground/[0.06] hover:bg-transparent">
+                    {/* Created and Updated were two of five columns and
+                        nobody acts on either. What they can do is the
+                        reason to look at this list. */}
                     <TableHead>Admin</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Updated</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
+                    <TableHead>What they can do</TableHead>
+                    <TableHead>Added</TableHead>
+                    <TableHead className="text-right" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {loading ? (
                     <TableRow>
                       <TableCell
-                        colSpan={5}
+                        colSpan={4}
                         className="h-24 text-center text-muted-foreground"
                       >
                         Loading…
@@ -423,7 +412,7 @@ function AccessView() {
                   ) : profiles.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={5}
+                        colSpan={4}
                         className="h-24 text-center text-muted-foreground"
                       >
                         No admins found.
@@ -457,15 +446,36 @@ function AccessView() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge className="bg-primary text-primary-foreground hover:bg-primary/80">
-                              {isCurrentUser ? "current admin" : "admin"}
-                            </Badge>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {/*
+                                A missing role_key is not "no access" —
+                                it is an older row that predates roles
+                                and still holds full admin. Saying
+                                "everything" is the honest reading.
+                              */}
+                              <Badge
+                                variant={
+                                  profile.role_key === "super"
+                                    ? "default"
+                                    : "secondary"
+                                }
+                              >
+                                {profile.role_key === "super"
+                                  ? "Everything, including admins"
+                                  : profile.role_key
+                                    ? profile.role_key
+                                    : "Everything"}
+                              </Badge>
+
+                              {isCurrentUser && (
+                                <span className="text-[0.8rem] text-muted-foreground">
+                                  you
+                                </span>
+                              )}
+                            </div>
                           </TableCell>
-                          <TableCell className="font-mono text-[0.86rem] text-muted-foreground">
+                          <TableCell className="text-[0.86rem] text-muted-foreground">
                             {formatDateTime(profile.created_at)}
-                          </TableCell>
-                          <TableCell className="font-mono text-[0.86rem] text-muted-foreground">
-                            {formatDateTime(profile.updated_at)}
                           </TableCell>
                           <TableCell className="text-right">
                             <Button

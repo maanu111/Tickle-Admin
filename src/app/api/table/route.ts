@@ -95,7 +95,6 @@ const READABLE = new Set([
   "referral_awards",
   "promo_codes",
   "cities",
-  "city_waitlist",
   "city_missions",
   "notification_categories",
   "report_reasons",

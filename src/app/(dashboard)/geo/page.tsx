@@ -10,9 +10,9 @@ import { PageHeader, Section, EmptyState } from "@/components/ui/page";
 import { StatStrip, StatusPill } from "@/components/ui/stat-strip";
 import { SkeletonCard, SkeletonStats } from "@/components/ui/skeleton";
 import { useLoadOnMount } from "@/lib/useLoadOnMount";
+import { isOnline } from "@/lib/presence";
 import { Segmented } from "@/components/ui/select";
 import { PathsPanel } from "@/components/geo/PathsPanel";
-import { CitiesPanel } from "@/components/geo/CitiesPanel";
 import { useSearchParams } from "next/navigation";
 
 type ProfileLocationRow = {
@@ -23,7 +23,6 @@ type ProfileLocationRow = {
   latitude: number | null;
   longitude: number | null;
   search_radius: number | null;
-  is_online: boolean | null;
   last_active: string | null;
 };
 
@@ -50,12 +49,11 @@ function formatCoordinate(value: number | null) {
   return value == null ? "-" : value.toFixed(5);
 }
 
-type Tab = "now" | "paths" | "cities";
+type Tab = "now" | "paths";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "now", label: "Where people are" },
   { value: "paths", label: "Crossing paths" },
-  { value: "cities", label: "Cities" },
 ];
 
 export default function GeoPage() {
@@ -80,7 +78,7 @@ export default function GeoPage() {
     const [{ data: profileData, error: profileError }, { data: encounterData }] =
       await Promise.all([
         adminTable<ProfileLocationRow>("profiles", {
-          select: "id, user_id, name, email, latitude, longitude, search_radius, is_online, last_active",
+          select: "id, user_id, name, email, latitude, longitude, search_radius, last_active",
           order: "last_active",
           limit: 100,
         }),
@@ -112,7 +110,8 @@ export default function GeoPage() {
   useLoadOnMount(loadGeo);
 
   const stats = useMemo(() => {
-    const active = profiles.filter((profile) => profile.is_online).length;
+    // Derived from the heartbeat, not the is_online latch. See lib/presence.
+    const active = profiles.filter((profile) => isOnline(profile.last_active)).length;
     const uniqueEncounterUsers = new Set(
       encounters.flatMap((encounter) =>
         [encounter.user_id, encounter.encountered_user_id].filter(Boolean),
@@ -166,8 +165,9 @@ export default function GeoPage() {
       }
 
       const presence = facets.presence ??"all";
-      if (presence === "online" && !profile.is_online) return false;
-      if (presence === "offline" && profile.is_online) return false;
+      const online = isOnline(profile.last_active);
+      if (presence === "online" && !online) return false;
+      if (presence === "offline" && online) return false;
 
       return true;
     });
@@ -181,7 +181,7 @@ export default function GeoPage() {
     <div className="space-y-4">
       <PageHeader
         title="Location"
-        description="Where members are, where they cross, and which cities are open."
+        description="Where members are, and where they cross."
         actions={
           <>
             <Segmented value={tab} onChange={setTab} options={TABS} />
@@ -195,9 +195,81 @@ export default function GeoPage() {
         }
       />
 
-      {tab === "paths" && <PathsPanel />}
+      {/*
+        The leaderboard moved here, off the locations tab.
 
-      {tab === "cities" && <CitiesPanel />}
+        "Crossing paths most" is a reading of the crossing data, so it
+        belongs beside the settings that decide what counts as a
+        crossing — change the radius and this list is what changes. On
+        the other tab it was a narrow column squeezing the location
+        list into two thirds of the page for a panel about a different
+        subject.
+      */}
+      {tab === "paths" && (
+        <div className="space-y-4">
+          {/* The two crossing numbers, on the tab that is about
+              crossings. They were in a strip of four on the other one,
+              mixed with location counts. */}
+          {!loading && (
+            <StatStrip
+              stats={[
+                { label: "Times people were near each other", value: stats.encounters },
+                { label: "People involved", value: stats.uniqueEncounterUsers },
+              ]}
+            />
+          )}
+
+          <PathsPanel />
+
+          <Section
+            title="Crossing paths most"
+            hint="Most often near others, out of the last 500 crossings. This is what the settings above produce."
+          >
+            {loading ? (
+              <SkeletonCard lines={4} />
+            ) : topEncountered.length === 0 ? (
+              <EmptyState
+                title="Nobody yet"
+                body="This fills in once members start being near each other."
+              />
+            ) : (
+              <div className="space-y-3">
+                {topEncountered.map(([userId, count]) => {
+                  const percentage = Math.max(
+                    8,
+                    Math.round((count / topEncountered[0][1]) * 100),
+                  );
+                  const name = nameByUser.get(userId);
+
+                  return (
+                    <div key={userId} className="space-y-1.5">
+                      <div className="flex justify-between gap-3 text-[0.86rem]">
+                        <Link
+                          href={`/members/${userId}`}
+                          className={`truncate hover:underline ${
+                            name ? "" : "font-mono text-muted-foreground"
+                          }`}
+                        >
+                          {name ?? "Deleted account"}
+                        </Link>
+                        <span className="tnum shrink-0 text-muted-foreground">
+                          {count} times
+                        </span>
+                      </div>
+                      <div className="h-1 w-full overflow-hidden rounded-full bg-foreground/[0.08]">
+                        <div
+                          className="h-full rounded-full bg-foreground/50"
+                          style={{ width: `${percentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </Section>
+        </div>
+      )}
 
       {tab === "now" && (
         <>
@@ -207,20 +279,27 @@ export default function GeoPage() {
         </div>
       )}
 
+      {/*
+        Two stats, not four.
+
+        The other two counted crossings — "times people were near each
+        other" and "people involved" — which is the subject of the other
+        tab, sitting on this one. A strip of four numbers about two
+        different things reads as one summary of neither.
+      */}
       {loading ? (
-        <SkeletonStats count={4} />
+        <SkeletonStats count={2} />
       ) : (
         <StatStrip
           stats={[
             { label: "Members with a location", value: stats.located, icon: MapPin },
             { label: "Online right now", value: stats.active, tone: "success" },
-            { label: "Times people were near each other", value: stats.encounters },
-            { label: "People involved", value: stats.uniqueEncounterUsers },
           ]}
         />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      {/* Full width now the crossings panel has moved to its own tab. */}
+      <div>
         <Section
           title="Recent locations"
           hint="Last known place, and how far they search."
@@ -284,8 +363,8 @@ export default function GeoPage() {
                           {formatCoordinate(profile.longitude)}
                         </p>
                       </div>
-                      <StatusPill tone={profile.is_online ? "success" : "neutral"}>
-                        {profile.is_online ? "Online" : "Offline"}
+                      <StatusPill tone={isOnline(profile.last_active) ? "success" : "neutral"}>
+                        {isOnline(profile.last_active) ? "Online" : "Offline"}
                       </StatusPill>
                     </div>
 
@@ -305,52 +384,6 @@ export default function GeoPage() {
                 onPage={setPage}
               />
             </>
-          )}
-        </Section>
-
-        <Section
-          title="Crossing paths most"
-          hint="Most often near others, out of the last 500 crossings."
-        >
-          {topEncountered.length === 0 ? (
-            <EmptyState
-              title="Nobody yet"
-              body="This fills in once members start being near each other."
-            />
-          ) : (
-            <div className="space-y-3">
-              {topEncountered.map(([userId, count]) => {
-                const percentage = Math.max(
-                  8,
-                  Math.round((count / topEncountered[0][1]) * 100),
-                );
-                const name = nameByUser.get(userId);
-
-                return (
-                  <div key={userId} className="space-y-1.5">
-                    <div className="flex justify-between gap-3 text-[0.86rem]">
-                      <Link
-                        href={`/members/${userId}`}
-                        className={`truncate hover:underline ${
-                          name ? "" : "font-mono text-muted-foreground"
-                        }`}
-                      >
-                        {name ?? "Deleted account"}
-                      </Link>
-                      <span className="tnum shrink-0 text-muted-foreground">
-                        {count} times
-                      </span>
-                    </div>
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-foreground/[0.08]">
-                      <div
-                        className="h-full rounded-full bg-foreground/50"
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
           )}
         </Section>
       </div>

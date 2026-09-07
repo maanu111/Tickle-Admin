@@ -249,8 +249,143 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ row: data });
     }
 
+    /*
+     * A new group — a heading fields sit under, like "About you".
+     *
+     * Groups were create-only in a migration, so adding a section to the
+     * profile meant a deploy. Unlike a field, a group points at nothing
+     * in `profiles`: it is purely how the editor is arranged, which is
+     * why it is safe to make from here.
+     */
+    if (entity === "group") {
+      const label = String(body.label ?? "").trim();
+
+      if (label.length < 2 || label.length > 40) {
+        return NextResponse.json(
+          { error: "A group needs a name between 2 and 40 characters." },
+          { status: 400 },
+        );
+      }
+
+      // Derived, like every other key here: it is a database identifier
+      // and inventing one is not the admin's job.
+      const key = label
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 40);
+
+      if (!key) {
+        return NextResponse.json(
+          { error: "That name has no letters or numbers in it." },
+          { status: 400 },
+        );
+      }
+
+      const { data, error } = await auth.supabase
+        .from("profile_field_groups")
+        .insert({ key, label, sort_order: Number(body.sort_order ?? 999) })
+        .select()
+        .single();
+
+      if (error) {
+        if (error.code === "23505") {
+          return NextResponse.json({ error: "That group already exists." }, { status: 409 });
+        }
+        throw error;
+      }
+
+      return NextResponse.json({ row: data });
+    }
+
     return NextResponse.json({ error: "Unknown entity." }, { status: 400 });
   } catch (error) {
     return failed(error, "Failed to add.");
+  }
+}
+
+/**
+ * Removing an option, a prompt or a group.
+ *
+ * Nothing here deleted before, on the reasoning that removing an option
+ * orphans the profiles that chose it. That is true, and it is also true
+ * that a list nobody can tidy fills up with typos and abandoned ideas
+ * that every admin after you has to read past.
+ *
+ * So the rule is per entity, by what it costs:
+ *
+ *   option — allowed. The value stays on profiles that picked it and
+ *            simply stops being offered. Worth saying, not worth
+ *            preventing.
+ *   prompt — allowed. Answers live in profiles.prompts as text and are
+ *            unaffected.
+ *   group  — refused while any field still points at it. The foreign key
+ *            would reject it anyway; this turns that into a sentence.
+ *   field  — never. profile_fields.key names a column in `profiles`, and
+ *            deleting the row cascades its options away while leaving
+ *            member data stranded behind a question nothing asks. Off is
+ *            the correct answer, and it is reversible.
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireAdmin(request);
+    if (auth.error) return auth.error;
+
+    const params = new URL(request.url).searchParams;
+    const entity = params.get("entity") ?? "";
+    const id = params.get("id") ?? "";
+
+    if (!id) return NextResponse.json({ error: "Missing id." }, { status: 400 });
+
+    if (entity === "field") {
+      return NextResponse.json(
+        {
+          error:
+            "A field cannot be deleted — its answers live on every profile that filled it in. Switch it off instead, which stops it being asked and can be undone.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const table = {
+      option: "profile_field_options",
+      prompt: "profile_prompts",
+      group: "profile_field_groups",
+    }[entity];
+
+    if (!table) {
+      return NextResponse.json({ error: "Unknown entity." }, { status: 400 });
+    }
+
+    if (entity === "group") {
+      const { data: group } = await auth.supabase
+        .from("profile_field_groups")
+        .select("key")
+        .eq("id", id)
+        .maybeSingle();
+
+      if (group) {
+        const { count } = await auth.supabase
+          .from("profile_fields")
+          .select("key", { count: "exact", head: true })
+          .eq("group_key", (group as { key: string }).key);
+
+        if ((count ?? 0) > 0) {
+          return NextResponse.json(
+            {
+              error: `${count} ${count === 1 ? "field is" : "fields are"} still in this group. Move them somewhere else first.`,
+            },
+            { status: 409 },
+          );
+        }
+      }
+    }
+
+    const { error } = await auth.supabase.from(table).delete().eq("id", id);
+    if (error) throw error;
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return failed(error, "Failed to remove.");
   }
 }

@@ -59,24 +59,33 @@ type Payload = {
 type Tab = "stream" | "rules" | "announce";
 
 const TABS: { value: Tab; label: string }[] = [
-  { value: "stream", label: "Messages" },
+  { value: "stream", label: "Conversations" },
   { value: "rules", label: "Rules" },
   { value: "announce", label: "Announcements" },
 ];
 
 const BLURB: Record<Tab, string> = {
   stream:
-    "Conversations as the two people saw them. Nothing here can be changed.",
-  rules: "How long messages last, and how Glimpses work.",
+    "Conversations as the two people saw them. Read only — nothing here can be changed.",
+  rules:
+    "How long a message lasts before it disappears, and what members are allowed to send.",
   announce:
     "Send a notification to everybody, or to one group. It reaches real phones straight away.",
 };
 
 export default function MessagingPage() {
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState<Tab>(() =>
-    searchParams.get("tab") === "rules" ? "rules" : "stream",
-  );
+  /*
+   * Checked against the list, not against one name.
+   *
+   * This tested only for "rules", so ?tab=announce fell through to the
+   * conversation stream — a link to the announcement composer landed on
+   * a different screen with no sign anything had gone wrong.
+   */
+  const [tab, setTab] = useState<Tab>(() => {
+    const asked = searchParams.get("tab") ?? "";
+    return TABS.some((entry) => entry.value === asked) ? (asked as Tab) : "stream";
+  });
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,28 +166,28 @@ export default function MessagingPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <PageHeader
-          title="Messaging"
-          description="Conversations, and how long messages last."
-          actions={
-            <>
-              <Segmented value={tab} onChange={setTab} options={TABS} />
-              {tab === "rules" && (
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  onClick={load}
-                  disabled={loading}
-                  aria-label="Refresh"
-                >
-                  <RefreshCw className={loading ? "animate-spin" : undefined} />
-                </Button>
-              )}
-            </>
-          }
-        />
-      </div>
+      {/* PageHeader is already a row with its actions on the right; the
+          extra flex wrapper around it did nothing but nest one. */}
+      <PageHeader
+        title="Messaging"
+        description="What members send each other, and the rules over it."
+        actions={
+          <>
+            <Segmented value={tab} onChange={setTab} options={TABS} />
+            {tab === "rules" && (
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={load}
+                disabled={loading}
+                aria-label="Refresh"
+              >
+                <RefreshCw className={loading ? "animate-spin" : undefined} />
+              </Button>
+            )}
+          </>
+        }
+      />
 
       <Explainer>{BLURB[tab]}</Explainer>
 
@@ -198,19 +207,20 @@ export default function MessagingPage() {
 
           {data && (
             <div className="grid gap-4 md:grid-cols-4">
-              <Stat label="Messages" value={data.volume.total} />
-              <Stat label="Photos bought to keep" value={data.volume.saved} />
+              <Stat label="Messages sent" value={data.volume.total} />
+              <Stat label="Photos paid to keep" value={data.volume.saved} />
               <Stat label="Voice notes" value={data.volume.byKind.voice ?? 0} />
-              <Stat label="Screenshot warnings" value={data.captures} />
+              <Stat label="Times somebody screenshotted" value={data.captures} />
             </div>
           )}
 
           {settings && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Limits</CardTitle>
+                <CardTitle className="text-base">What members can send</CardTitle>
                 <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
-                  How much somebody can send, and how quickly.
+                  How long a voice note can run, how long somebody has to fix a
+                  typo, and how quickly they can send.
                 </p>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -255,9 +265,14 @@ export default function MessagingPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Retention options</CardTitle>
-              <p className="text-[0.92rem] text-muted-foreground">
-                Disappear after a set time, or after a set number of opens.
+              <CardTitle className="text-base">
+                How long messages stay
+              </CardTitle>
+              <p className="text-[0.92rem] leading-relaxed text-muted-foreground">
+                The choices a member gets for making a message disappear — after
+                a set time, or after it has been opened a set number of times.
+                Retiring one stops it being offered; conversations already using
+                it keep it.
               </p>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -364,9 +379,14 @@ export default function MessagingPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Glimpse durations</CardTitle>
-              <p className="text-[0.92rem] text-muted-foreground">
-                Milliseconds. A Glimpse is a glance, not a short video.
+              <CardTitle className="text-base">
+                How long a peek lasts
+              </CardTitle>
+              <p className="text-[0.92rem] leading-relaxed text-muted-foreground">
+                A Glimpse is a photo the other person sees once, for a moment,
+                and then it is gone. These are how long that moment can be, in
+                milliseconds — 2000 is two seconds. Long enough to look, not
+                long enough to read a phone number off it.
               </p>
             </CardHeader>
             <CardContent className="space-y-3">

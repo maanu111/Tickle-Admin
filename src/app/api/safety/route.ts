@@ -223,3 +223,44 @@ export async function PATCH(request: NextRequest) {
     return failed(error, "Failed to update.");
   }
 }
+
+/**
+ * Removing a rule or a blocked domain.
+ *
+ * These could be created and switched off, never deleted — so a rule
+ * added with a typo in its pattern stayed in the list forever, greyed
+ * out, alongside the corrected one. A list nobody can tidy is a list
+ * people stop reading.
+ *
+ * Deletion is safe here in a way it is not for offers or codes: a rule
+ * is matched live against new messages and leaves no rows pointing back
+ * at it. Nothing loses its history when one goes.
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireAdmin(request, "config.safety");
+    if (auth.error) return auth.error;
+
+    const params = new URL(request.url).searchParams;
+    const id = params.get("id") ?? "";
+    const entity = params.get("entity") ?? "";
+
+    const table =
+      entity === "rule"
+        ? "safety_rules"
+        : entity === "domain"
+          ? "link_blocklist"
+          : null;
+
+    if (!table || !id) {
+      return NextResponse.json({ error: "Unknown target." }, { status: 400 });
+    }
+
+    const { error } = await auth.supabase.from(table).delete().eq("id", id);
+    if (error) throw error;
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    return failed(error, "Failed to remove.");
+  }
+}

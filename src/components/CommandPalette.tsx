@@ -11,6 +11,7 @@ import {
   type CommandEntry,
 } from "@/lib/commandRegistry";
 import { useModalLock } from "@/lib/useModalLock";
+import { adminFetch } from "@/lib/adminFetch";
 
 /**
  * Find anything in the panel.
@@ -24,14 +25,23 @@ import { useModalLock } from "@/lib/useModalLock";
  * because a data row will always match more text than a page title.
  */
 
-interface MemberHit {
-  user_id: string;
-  name: string | null;
-  email: string | null;
-  photos: string[] | null;
-}
+/**
+ * A row found in the database rather than in the registry.
+ *
+ * The palette searched pages and members only, so everything else —
+ * a venue, a scam pattern, a promo code, a job title — could be found
+ * only by remembering which screen owned it and searching there. This
+ * comes from /api/search, which asks thirteen tables at once.
+ */
+type RecordHit = {
+  kind: string;
+  group: string;
+  label: string;
+  hint: string;
+  href: string;
+};
 
-const EMPTY_MEMBERS: MemberHit[] = [];
+const EMPTY_RECORDS: RecordHit[] = [];
 
 const RECORD_DEBOUNCE_MS = 220;
 
@@ -41,7 +51,7 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
-  const [members, setMembers] = useState<MemberHit[]>([]);
+  const [records, setRecords] = useState<RecordHit[]>([]);
   const [searching, setSearching] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -61,16 +71,38 @@ export function CommandPalette() {
    * on screen for a render before being wiped — and the wipe was a
    * second render doing nothing but forgetting.
    */
-  const shownMembers = query.trim().length < 2 ? EMPTY_MEMBERS : members;
+  const shownRecords = query.trim().length < 2 ? EMPTY_RECORDS : records;
+
+  /*
+   * Records bundled under their source, keeping each row own flat index.
+   *
+   * The flat index is what the arrow keys move through, so it has to be
+   * computed against the same order the list renders in — deriving it
+   * from the group would make Down skip rows once a group had more than
+   * one member.
+   */
+  const grouped = useMemo(() => {
+    const groups: { label: string; rows: { record: RecordHit; flat: number }[] }[] = [];
+
+    shownRecords.forEach((record, index) => {
+      const flat = commands.length + index;
+      const existing = groups.find((group) => group.label === record.group);
+
+      if (existing) existing.rows.push({ record, flat });
+      else groups.push({ label: record.group, rows: [{ record, flat }] });
+    });
+
+    return groups;
+  }, [shownRecords, commands.length]);
 
   // One flat list, so arrow keys move through both sections without the
   // caller having to know where one ends.
   const results = useMemo(
     () => [
       ...commands.map((entry) => ({ type: "command" as const, entry })),
-      ...shownMembers.map((member) => ({ type: "member" as const, member })),
+      ...shownRecords.map((record) => ({ type: "record" as const, record })),
     ],
-    [commands, shownMembers]
+    [commands, shownRecords]
   );
 
   /*
@@ -84,7 +116,7 @@ export function CommandPalette() {
   const close = useCallback(() => {
     setOpen(false);
     setQuery("");
-    setMembers([]);
+    setRecords([]);
     setActive(0);
   }, []);
 
@@ -136,18 +168,24 @@ export function CommandPalette() {
     const timer = setTimeout(async () => {
       setSearching(true);
 
-      const { data } = await supabase
-        .from("profiles")
-        .select("user_id, name, email, photos")
-        .or(`name.ilike.%${q}%,email.ilike.%${q}%`)
-        .limit(5);
+      /*
+       * One request, thirteen tables.
+       *
+       * Through the panel route rather than straight at Supabase: RLS
+       * scopes most of these to the signed-in member, so a browser
+       * query would find almost nothing. The route reads with the
+       * service role behind the same admin check as every other page.
+       */
+      const { data } = await adminFetch<{ results: RecordHit[] }>(
+        `/api/search?q=${encodeURIComponent(q)}`,
+      );
 
       // A slower earlier request must never overwrite a newer one — the
       // classic way a palette ends up showing results for a prefix the user
       // has already finished typing past.
       if (ticket !== latest.current) return;
 
-      setMembers((data as MemberHit[]) ?? []);
+      setRecords(data?.results ?? []);
       setSearching(false);
     }, RECORD_DEBOUNCE_MS);
 
@@ -190,7 +228,7 @@ export function CommandPalette() {
         return;
       }
 
-      router.push(`/members/${result.member.user_id}`);
+      router.push(result.record.href);
     },
     [results, router, close]
   );
@@ -280,22 +318,24 @@ export function CommandPalette() {
                       </Section>
                     )}
 
-                    {shownMembers.length > 0 && (
-                      <Section label="Members">
-                        {shownMembers.map((member, index) => {
-                          const flat = commands.length + index;
-                          return (
-                            <MemberRow
-                              key={member.user_id}
-                              member={member}
-                              active={active === flat}
-                              onHover={() => setActive(flat)}
-                              onSelect={() => choose(flat)}
-                            />
-                          );
-                        })}
+                    {/*
+                      Grouped by where each row came from, so thirteen
+                      tables answering at once reads as sections rather
+                      than as one undifferentiated list.
+                    */}
+                    {grouped.map((group) => (
+                      <Section key={group.label} label={group.label}>
+                        {group.rows.map(({ record, flat }) => (
+                          <RecordRow
+                            key={group.label + record.label + flat}
+                            record={record}
+                            active={active === flat}
+                            onHover={() => setActive(flat)}
+                            onSelect={() => choose(flat)}
+                          />
+                        ))}
                       </Section>
-                    )}
+                    ))}
                   </>
                 )}
               </div>
@@ -365,36 +405,40 @@ function CommandRow({
   );
 }
 
-function MemberRow({
-  member,
+/**
+ * One row found in the database.
+ *
+ * Deliberately plainer than the command rows above it: a page is a
+ * destination and gets an icon, a record is a thing and gets its name
+ * plus whatever identifies it — an email, an address, a pattern.
+ */
+function RecordRow({
+  record,
   active,
   onHover,
   onSelect,
 }: {
-  member: MemberHit;
+  record: RecordHit;
   active: boolean;
   onHover: () => void;
   onSelect: () => void;
 }) {
-  const photo = member.photos?.[0];
-
   return (
     <button
       onMouseEnter={onHover}
       onClick={onSelect}
       className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition ${
-        active ? "bg-muted" :""
+        active ? "bg-muted" : ""
       }`}
     >
-      {photo ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={photo} alt="" className="size-7 shrink-0 rounded-full object-cover" />
-      ) : (
-        <span className="size-7 shrink-0 rounded-full bg-muted" />
-      )}
+      <span className="size-1.5 shrink-0 rounded-full bg-foreground/25" />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-[0.92rem]">{member.name ??"Unnamed"}</span>
-        <span className="block truncate text-[0.86rem] text-muted-foreground">{member.email}</span>
+        <span className="block truncate text-[0.92rem]">{record.label}</span>
+        {record.hint && (
+          <span className="block truncate text-[0.86rem] text-muted-foreground">
+            {record.hint}
+          </span>
+        )}
       </span>
     </button>
   );

@@ -22,34 +22,54 @@ import type { RosePayload } from "@/components/roses/parts";
  * of the same decision — how many roses exist, and what they buy — and
  * nobody could see the tank while turning a tap.
  *
- * The tabs are that tank, in order: what is happening, what makes roses,
- * what consumes them, every movement, what the stores have sent, and what
- * an admin hands over by hand.
- *
  * The rose fields **moved** here; they were not copied. A setting
  * editable in two places is a setting with two answers.
+ *
+ * There were seven tabs, and all seven read one /api/roses response —
+ * so they were never saving a request, only hiding data already
+ * fetched. Worse, they split things that are only meaningful against
+ * each other: Packs said what is for sale and Purchases said what
+ * actually sold, two tabs apart. Overview was a summary of Earning and
+ * Spending, which made it a third place to look at the same numbers.
+ *
+ * Three now, by the question being asked:
+ *
+ *   Money    — what is sold, and what sold. Packs plus purchases.
+ *   Supply   — how roses enter and leave, and the summary of both.
+ *   Records  — what happened to one person's roses. Ledger plus grants,
+ *              which belong together because granting some is followed
+ *              immediately by checking the ledger to see it worked.
  */
 
-type Tab = "overview" | "packs" | "earning" | "spending" | "ledger" | "purchases" | "grants";
+type Tab = "money" | "supply" | "records";
 
 const TABS: { value: Tab; label: string }[] = [
-  { value: "overview", label: "Overview" },
-  { value: "packs", label: "Packs" },
-  { value: "earning", label: "Earning" },
-  { value: "spending", label: "Spending" },
-  { value: "ledger", label: "Ledger" },
-  { value: "purchases", label: "Purchases" },
-  { value: "grants", label: "Grants" },
+  { value: "money", label: "Money" },
+  { value: "supply", label: "Supply" },
+  { value: "records", label: "Records" },
 ];
 
+/*
+ * Where the old tab names land now.
+ *
+ * Five of them are linked from the command palette and from anything
+ * anybody bookmarked. Dropping them would turn those into a silent
+ * fallback to the first tab, which looks like the link is broken.
+ */
+const MOVED: Record<string, Tab> = {
+  overview: "supply",
+  packs: "money",
+  purchases: "money",
+  earning: "supply",
+  spending: "supply",
+  ledger: "records",
+  grants: "records",
+};
+
 const BLURB: Record<Tab, string> = {
-  overview: "How many roses exist, and where they came from.",
-  packs: "What somebody can buy with real money.",
-  earning: "Every way a rose is given away for free.",
-  spending: "Everything a rose can be spent on, and what it costs.",
-  ledger: "Every rose that has moved, newest first.",
-  purchases: "Purchases from the app stores, including ones that failed.",
-  grants: "Give roses to somebody, or take them back.",
+  money: "What people can buy with real money, and what they actually bought.",
+  supply: "How roses get made, what they are spent on, and the balance of the two.",
+  records: "Every rose that has moved, and the controls to move some by hand.",
 };
 
 export default function RosesPage() {
@@ -66,8 +86,11 @@ function RosesView() {
   const searchParams = useSearchParams();
 
   const [tab, setTab] = useState<Tab>(() => {
-    const asked = searchParams.get("tab") as Tab | null;
-    return asked && TABS.some((entry) => entry.value === asked) ? asked : "overview";
+    const asked = searchParams.get("tab") ?? "";
+    if (TABS.some((entry) => entry.value === asked)) return asked as Tab;
+    // An old link — send it where that content went rather than
+    // dropping the reader on the first tab with no explanation.
+    return MOVED[asked] ?? "supply";
   });
 
   const [data, setData] = useState<RosePayload | null>(null);
@@ -119,21 +142,38 @@ function RosesView() {
 
     const props = { data, patch, busy };
 
+    /*
+     * Order within each tab is the order the question gets asked.
+     *
+     * Money puts what is for sale above what sold, because a price is
+     * read against its takings. Supply leads with the summary and then
+     * shows the two halves it summarises. Records puts the ledger
+     * first — it is what you came to look at; granting is the rarer
+     * thing you do while here.
+     */
     switch (tab) {
-      case "overview":
-        return <RoseOverview {...props} />;
-      case "packs":
-        return <RosePacks {...props} />;
-      case "earning":
-        return <RoseEarning {...props} />;
-      case "spending":
-        return <RoseSpending {...props} />;
-      case "ledger":
-        return <RoseLedger {...props} />;
-      case "purchases":
-        return <RosePurchases {...props} />;
-      case "grants":
-        return <RoseGrants {...props} reload={load} />;
+      case "money":
+        return (
+          <div className="space-y-10">
+            <RosePacks {...props} />
+            <RosePurchases {...props} />
+          </div>
+        );
+      case "supply":
+        return (
+          <div className="space-y-10">
+            <RoseOverview {...props} />
+            <RoseEarning {...props} />
+            <RoseSpending {...props} />
+          </div>
+        );
+      case "records":
+        return (
+          <div className="space-y-10">
+            <RoseLedger {...props} />
+            <RoseGrants {...props} reload={load} />
+          </div>
+        );
     }
   };
 

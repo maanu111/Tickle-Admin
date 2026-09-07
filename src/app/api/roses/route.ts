@@ -8,7 +8,7 @@ import { NAME_COLUMNS, nameByUserId, type NamedProfile } from "@/lib/supabase/na
  * Roses are the in-app currency, and until now the numbers that govern
  * them were scattered across six screens: packs on /plans, drop and
  * extend costs on /hearts, the revival price and the media-save split in
- * fairness settings, founding grants on /cities, referral and mission
+ * fairness settings, referral and mission
  * rewards on two more. Every one of those is the same decision — how
  * many roses come in, and what they buy — and no screen showed enough of
  * it to make that decision.
@@ -57,8 +57,6 @@ const FIELDS: Record<string, Target> = {
   signup_roses: { table: "plans", by: "key", min: 0, max: 1000 },
   super_like_rose_cost: { table: "plans", by: "key", min: 0, max: 500 },
 
-  // cities — per slug.
-  founding_roses: { table: "cities", by: "slug", min: 0, max: 5000 },
 
   // rose_packs — per row.
   amount: { table: "rose_packs", by: "id", min: 1, max: 100000 },
@@ -120,7 +118,6 @@ export async function GET(request: NextRequest) {
       plansRes,
       fairnessRes,
       heartsRes,
-      citiesRes,
       milestonesRes,
       missionsRes,
       codesRes,
@@ -142,7 +139,6 @@ export async function GET(request: NextRequest) {
       supabase.from("plans").select("key, label, signup_roses, super_like_rose_cost").order("key"),
       supabase.from("fairness_settings").select("*").eq("id", 1).maybeSingle(),
       supabase.from("heart_settings").select("*").eq("id", 1).maybeSingle(),
-      supabase.from("cities").select("slug, name, status, founding_roses").order("name"),
       supabase.from("referral_milestones").select("*").order("sort_order"),
       supabase.from("city_missions").select("*").order("city_slug"),
       supabase.from("promo_codes").select("*").order("created_at", { ascending: false }),
@@ -248,7 +244,6 @@ export async function GET(request: NextRequest) {
       plans: plansRes.data ?? [],
       fairness: fairnessRes.data ?? null,
       heartSettings: heartsRes.data ?? null,
-      cities: citiesRes.data ?? [],
       milestones: milestonesRes.data ?? [],
       missions: missionsRes.data ?? [],
       codes: codesRes.data ?? [],

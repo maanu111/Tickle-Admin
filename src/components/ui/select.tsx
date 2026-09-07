@@ -160,7 +160,20 @@ export function Select({
             // scrolls internally instead of running off the screen.
             maxHeight: Math.max(160, window.innerHeight - box.bottom - 24),
           }}
-          className="animate-toast-in surface-float z-[200] overflow-auto rounded-xl p-1"
+          /*
+           * Above the modals, deliberately.
+           *
+           * This was z-[200] while every wizard and confirm dialog is
+           * z-[300]. Both portal to <body>, so they are siblings and
+           * z-index alone decides — which meant a dropdown opened inside
+           * a wizard rendered behind it. The trigger showed the current
+           * value, the menu was there in the DOM, and nothing appeared:
+           * it read as a dropdown with only one option.
+           *
+           * A menu always belongs above the surface that owns it, so
+           * this sits above the modal layer rather than beside it.
+           */
+          className="animate-toast-in surface-float z-[400] overflow-auto rounded-xl p-1"
         >
           {options.map((option) => {
             const active = option.value === value;

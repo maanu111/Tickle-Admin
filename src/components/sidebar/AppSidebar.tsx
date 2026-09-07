@@ -96,7 +96,7 @@ const NAV: { heading: string; items: NavItem[] }[] = [
   {
     heading: "Rules",
     items: [
-      { name: "Compatibility", url: "/compatibility", icon: Puzzle },
+      { name: "Matching", url: "/compatibility", icon: Puzzle },
       // Questions, the job list and the filters over them are one subject.
       { name: "Profile", url: "/fields", icon: ListChecks },
       { name: "Messaging", url: "/messaging", icon: MessageSquare },

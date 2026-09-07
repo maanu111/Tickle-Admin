@@ -15,10 +15,13 @@ import {
 import { RefreshCw } from "lucide-react";
 import { FairnessEditor } from "@/components/FairnessEditor";
 import { FreshStartPanel } from "@/components/discovery/FreshStartPanel";
-import { Divider, PageSkeleton } from "@/components/ui/page";
+import { Divider, Explainer, PageHeader, PageSkeleton } from "@/components/ui/page";
+import { Segmented } from "@/components/ui/select";
 import { Pagination, paginate, usePagination } from "@/components/ui/pagination";
 import { useLoadOnMount } from "@/lib/useLoadOnMount";
 import { useConfirm } from "@/components/ui/confirm";
+import { QuestionEditor } from "@/components/compat/QuestionEditor";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 
 /**
  * The compatibility engine, from the outside.
@@ -33,7 +36,50 @@ import { useConfirm } from "@/components/ui/confirm";
  *
  * Individual answers are deliberately not here. Reading what one named
  * person said about jealousy or money is not moderation.
+ *
+ * Two subjects share this screen, and they were stacked with nothing
+ * but a divider between them. The page called itself "Compatibility"
+ * and said it was about sign-up questions — then, below the fold,
+ * carried the pass cooldowns, the daily exposure cap and the new-member
+ * boost, none of which are questions. Somebody looking for the fairness
+ * settings had no reason to look here, and somebody reading the
+ * dimensions table had a wall of unrelated fields under it.
+ *
+ * They are tabs now, and the page is called Matching, which is the one
+ * word that honestly covers both.
  */
+
+type Tab = "questions" | "visibility";
+
+const TABS: { value: Tab; label: string }[] = [
+  { value: "questions", label: "Questions" },
+  { value: "visibility", label: "Who gets seen" },
+];
+
+/*
+ * Anchors that live on the visibility tab.
+ *
+ * Taken from FairnessEditor's field list and FreshStartPanel, plus the
+ * fresh-start wrapper on this page. A link to any of these has to open
+ * that tab or it lands on a screen without the setting it named.
+ */
+const VISIBILITY_ANCHORS = new Set([
+  "fresh-start",
+  "exposure-cap",
+  "reshow-gap",
+  "second-chance",
+  "pass-cooldown-1",
+  "pass-cooldown-2",
+  "pass-cooldown-3",
+  "pass-permanent",
+]);
+
+const BLURB: Record<Tab, string> = {
+  questions:
+    "The questions a match score is built from, and whether each one actually tells people apart.",
+  visibility:
+    "How long somebody waits after a pass, how widely one profile may be shown, and the boost a new member gets.",
+};
 
 type Dimension = {
   key: string;
@@ -41,6 +87,8 @@ type Dimension = {
   question: string;
   kind: string;
   section: string;
+  options: string[] | null;
+  sort: number;
   quick_start: boolean;
   active: boolean;
   answered: number;
@@ -65,6 +113,7 @@ type Payload = {
   pool: Pool;
   median: number | null;
   buckets: Bucket[];
+  sections: string[];
   dimensions: Dimension[];
 };
 
@@ -118,6 +167,77 @@ export default function CompatibilityPage() {
     [load, confirm],
   );
 
+  /*
+   * Writing or rewording a question.
+   *
+   * One handler for both: the payload carries a key when editing and a
+   * kind when creating, and the route decides from the method. Keeping
+   * them together is what stops the two drifting into different rules
+   * about what a valid question is.
+   */
+  const [editorFor, setEditorFor] = useState<Dimension | null>(null);
+  const [writing, setWriting] = useState(false);
+
+  const saveQuestion = useCallback(
+    async (payload: Record<string, unknown>) => {
+      setBusy("editor");
+      setError(null);
+
+      const { error } = await adminFetch("/api/compatibility", {
+        method: payload.key ? "PATCH" : "POST",
+        body: JSON.stringify(payload),
+      });
+
+      if (error) setError(error);
+      else {
+        setEditorFor(null);
+        setWriting(false);
+        await load();
+      }
+
+      setBusy(null);
+    },
+    [load],
+  );
+
+  /*
+   * Deleting a question.
+   *
+   * compat_answers cascades, so this throws away every answer anybody
+   * gave it. The route refuses when somebody has answered unless it is
+   * told to go ahead, which is what the second confirm is for — the
+   * first one is not enough warning for something unrecoverable.
+   */
+  const removeQuestion = useCallback(
+    async (dimension: Dimension) => {
+      const ok = await confirm({
+        title: `Delete "${dimension.label}"?`,
+        body:
+          dimension.answered > 0
+            ? `${dimension.answered} ${dimension.answered === 1 ? "person has" : "people have"} answered this, and those answers go with it. Switching it off instead stops the question being asked and keeps them.`
+            : "Nobody has answered it, so nothing is lost.",
+        confirmLabel: "Delete it",
+        tone: "danger",
+      });
+
+      if (!ok) return;
+
+      setBusy(dimension.key);
+      setError(null);
+
+      const { error } = await adminFetch(
+        `/api/compatibility?key=${encodeURIComponent(dimension.key)}&force=${dimension.answered > 0}`,
+        { method: "DELETE" },
+      );
+
+      if (error) setError(error);
+      else await load();
+
+      setBusy(null);
+    },
+    [load, confirm],
+  );
+
   const peak = useMemo(
     () => Math.max(1, ...(data?.buckets ?? []).map((bucket) => bucket.count)),
     [data],
@@ -127,25 +247,49 @@ export default function CompatibilityPage() {
   // later page cannot leave you looking at an empty one.
   const { page, setPage } = usePagination(data?.dimensions.length ?? 0);
 
+  /*
+   * The tab follows the link that opened the page.
+   *
+   * Three command-palette entries deep-link to anchors that live on the
+   * visibility side — #fresh-start, #pass-cooldown-1, #exposure-cap.
+   * Defaulting to Questions would drop every one of those on a tab that
+   * does not contain the thing they named, which reads as a dead link
+   * rather than as a tab that needs pressing.
+   *
+   * Read once, in a lazy initialiser: this is where the reader arrived,
+   * not a value to keep in step afterwards.
+   */
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window === "undefined") return "questions";
+
+    const anchor = window.location.hash.slice(1);
+    return VISIBILITY_ANCHORS.has(anchor) ? "visibility" : "questions";
+  });
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[1.6rem] font-medium tracking-tight">Compatibility</h1>
-          <p className="mt-1 max-w-2xl text-[0.92rem] leading-relaxed text-muted-foreground">
-            Sign-up questions, and how well they tell people apart.
-          </p>
-        </div>
-        <Button
-          variant="outline"
-          onClick={load}
-          disabled={loading}
-          className="border-foreground/[0.06] text-[0.86rem]"
-        >
-          <RefreshCw className={`mr-2 size-4 ${loading ? "animate-spin" :""}`} />
-          Refresh
-        </Button>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="Matching"
+        description="The questions behind a match score, and who gets seen."
+        actions={
+          <>
+            <Segmented value={tab} onChange={setTab} options={TABS} />
+            {tab === "questions" && (
+              <Button
+                variant="secondary"
+                size="icon"
+                onClick={load}
+                disabled={loading}
+                aria-label="Refresh"
+              >
+                <RefreshCw className={loading ? "animate-spin" : undefined} />
+              </Button>
+            )}
+          </>
+        }
+      />
+
+      <Explainer>{BLURB[tab]}</Explainer>
 
       {error && (
         <div className="rounded-xl border border-destructive/25 bg-destructive/8 px-3.5 py-2.5 text-[0.92rem] text-destructive">
@@ -153,9 +297,9 @@ export default function CompatibilityPage() {
         </div>
       )}
 
-      {loading || !data ? (
+      {tab === "questions" && (loading || !data) ? (
         <PageSkeleton sections={2} />
-      ) : (
+      ) : tab === "questions" && data ? (
         <>
           <div className="grid gap-4 md:grid-cols-4">
             <Stat label="People who answered" value={data.people} />
@@ -166,38 +310,49 @@ export default function CompatibilityPage() {
 
           <Card className="border-foreground/[0.06] bg-card">
             <CardHeader>
-              <CardTitle>Filling decks</CardTitle>
+              <CardTitle>Are people running out of profiles?</CardTitle>
               <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
-                How many people the app had to look through to fill somebody&apos;s
-                stack of profiles. If this keeps climbing, members are running out
-                of new people to see.
+                Everyone gets a queue of profiles to swipe through, rebuilt as they
+                get near the end. If the numbers here shrink, people are running out
+                of new faces — which usually means the city needs more members, not
+                different settings.
               </p>
             </CardHeader>
             <CardContent>
               <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                <PoolStat label="People lined up to be shown" value={data.pool.rows} />
+                <PoolStat label="Profiles queued up to show" value={data.pool.rows} />
                 <PoolStat
-                  label="Not put in order yet"
+                  label="Still unscored"
                   value={data.pool.unranked}
                   warn={data.pool.rows > 0 && data.pool.unranked / data.pool.rows > 0.4}
                   note={
                     data.pool.rows > 0
-                      ? `${Math.round((data.pool.unranked / data.pool.rows) * 100)}% of everyone lined up`
+                      ? `${Math.round((data.pool.unranked / data.pool.rows) * 100)}% of the queue`
                       : undefined
                   }
                 />
-                <PoolStat label="Members with a deck ready" value={data.pool.withPools} />
-                <PoolStat label="Decks rebuilt today" value={data.pool.refreshedToday} />
+                <PoolStat label="Members with profiles to swipe" value={data.pool.withPools} />
+                <PoolStat label="Queues refreshed today" value={data.pool.refreshedToday} />
               </div>
             </CardContent>
           </Card>
 
           <Card className="border-foreground/[0.06] bg-card">
             <CardHeader>
-              <CardTitle>Match scores</CardTitle>
+              {/*
+                This said a middle hump meant the questions were failing,
+                which is the opposite of what the code comment below it
+                says and of what the shape means. A hump in the middle is
+                the healthy result: most people are a so-so match, a few
+                are great, a few are poor. Everything piled at the top is
+                the broken case.
+              */}
+              <CardTitle>Are the questions telling people apart?</CardTitle>
               <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
-                If most pairs land in the middle, the questions are not telling
-                people apart and almost everyone looks like an equal match.
+                How well every pair of members scores against each other. You want a
+                hump in the middle — most people a so-so match, a few great, a few
+                poor. If it is all bunched at the right, everyone looks like a
+                perfect match, which is the same as no matching at all.
               </p>
             </CardHeader>
             <CardContent>
@@ -222,21 +377,49 @@ export default function CompatibilityPage() {
 
           <Card className="border-foreground/[0.06] bg-card">
             <CardHeader>
-              <CardTitle>Dimensions</CardTitle>
-              <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
-                The traits the score is built from, and how much each one counts.
-              </p>
+              {/*
+                Was "Dimensions", which is the word the code uses for a
+                row in this table and means nothing to anyone else. Each
+                one is a question people answer at sign-up; the score is
+                how closely two people's answers line up.
+              */}
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <CardTitle>The questions</CardTitle>
+                  <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
+                    People answer these when they join. Two people who answer alike
+                    score higher with each other. A question almost nobody answers
+                    is worth rewording or switching off.
+                  </p>
+                </div>
+
+                <Button
+                  onClick={() => setWriting(true)}
+                  className="h-9 shrink-0 text-[0.86rem]"
+                >
+                  <Plus className="mr-1.5 size-3.5" />
+                  Add a question
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <Table>
                 <TableHeader>
                   <TableRow className="border-foreground/[0.06] hover:bg-transparent">
+                    {/*
+                      Every one of these was a field name. "Must-match"
+                      is the count of people who called it a dealbreaker,
+                      "Quick start" is whether it is asked during signup
+                      or left for later, and "Active" is whether it
+                      counts at all — none of which those words said.
+                    */}
                     <TableHead>Question</TableHead>
-                    <TableHead>Section</TableHead>
-                    <TableHead className="text-right">Answered</TableHead>
-                    <TableHead className="text-right">Must-match</TableHead>
-                    <TableHead className="w-28">Quick start</TableHead>
-                    <TableHead className="w-24">Active</TableHead>
+                    <TableHead>Group</TableHead>
+                    <TableHead className="text-right">Answered it</TableHead>
+                    <TableHead className="text-right">Call it a dealbreaker</TableHead>
+                    <TableHead className="w-32">Asked at signup</TableHead>
+                    <TableHead className="w-28">Counts</TableHead>
+                    <TableHead className="w-24" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -271,7 +454,7 @@ export default function CompatibilityPage() {
                           disabled={busy === dimension.key}
                           className="text-[0.86rem] text-muted-foreground transition-colors hover:text-foreground"
                         >
-                          {dimension.quick_start ? "In" :"Out"}
+                          {dimension.quick_start ? "Yes" : "Later"}
                         </button>
                       </TableCell>
                       <TableCell>
@@ -287,39 +470,101 @@ export default function CompatibilityPage() {
                                 :"border-foreground/[0.06] bg-muted text-muted-foreground"
                             }`}
                           >
-                            {dimension.active ? "On" :"Off"}
+                            {dimension.active ? "Yes" : "No"}
                           </Badge>
                         </button>
                       </TableCell>
+
+                      <TableCell>
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={busy === dimension.key}
+                            onClick={() => setEditorFor(dimension)}
+                            aria-label={`Edit ${dimension.label}`}
+                            title="Reword this question"
+                          >
+                            <Pencil className="size-3.5" />
+                          </Button>
+
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={busy === dimension.key}
+                            onClick={() => removeQuestion(dimension)}
+                            aria-label={`Delete ${dimension.label}`}
+                            title="Delete this question"
+                            className="text-destructive hover:text-destructive"
+                          >
+                            <Trash2 className="size-3.5" />
+                          </Button>
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))}
-                    <Pagination page={page} total={data.dimensions.length} onPage={setPage} />
                   </>
                 </TableBody>
               </Table>
+
+              {/* Outside the table. Pagination renders a <div>, which is
+                  not valid inside a tbody — the browser lifts it out
+                  during parse, so the server and client trees disagree
+                  and hydration fails. */}
+              <div className="pt-3">
+                <Pagination page={page} total={data.dimensions.length} onPage={setPage} />
+              </div>
             </CardContent>
           </Card>
         </>
-      )}
-      {/* Three subjects on one screen, so each states where it begins.
-          The fairness editor in particular is a bare grid of fields — with
-          nothing above it, it reads as a continuation of the table before
-          it rather than a different decision. */}
-      <Divider
-        title="Being fair about who gets seen"
-        hint="How long somebody waits after a pass, and how widely one profile may be shown."
-        className="mt-8"
-      />
-      <FairnessEditor />
+      ) : null}
 
-      <div id="fresh-start" className="scroll-mt-24 space-y-5">
-        <Divider
-          title="Fresh Start Boost"
-          hint="Extra visibility for a member's first days, so a new profile is not the least seen one."
-          className="mt-8"
+      {/*
+        The visibility settings, on a tab of their own.
+
+        These were below the dimensions table behind a divider, on a page
+        that described itself as being about sign-up questions. Both
+        halves are about matching, but only one is about questions —
+        and a setting nobody expects to find on a screen is a setting
+        nobody finds.
+      */}
+      {tab === "visibility" && (
+        <div className="space-y-6">
+          <Divider
+            title="Being fair about who gets seen"
+            hint="How long somebody waits after a pass, and how widely one profile may be shown."
+          />
+          <FairnessEditor />
+
+          <div id="fresh-start" className="scroll-mt-24 space-y-5">
+            <Divider
+              title="Fresh Start Boost"
+              hint="Extra visibility for a member's first days, so a new profile is not the least seen one."
+              className="mt-8"
+            />
+            <FreshStartPanel />
+          </div>
+        </div>
+      )}
+
+      {/*
+        Keyed on the question so the editor's fields start from the row
+        being edited. Without a key React reuses the mounted instance and
+        the second question you open shows the first one's wording.
+      */}
+      {(writing || editorFor) && (
+        <QuestionEditor
+          key={editorFor?.key ?? "new"}
+          question={editorFor}
+          sections={data?.sections ?? []}
+          busy={busy === "editor"}
+          onSave={saveQuestion}
+          onCancel={() => {
+            setEditorFor(null);
+            setWriting(false);
+          }}
         />
-        <FreshStartPanel />
-      </div>
+      )}
     </div>
   );
 }

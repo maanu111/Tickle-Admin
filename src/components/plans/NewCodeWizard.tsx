@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useModalLock } from "@/lib/useModalLock";
+import { adminFetch } from "@/lib/adminFetch";
 import { Check, X } from "lucide-react";
 
 /**
@@ -78,7 +79,7 @@ const SEGMENTS: Record<string, string> = {
   lapsed: "People whose Premium ran out",
 };
 
-type City = { slug: string; name: string; live?: boolean };
+type City = { slug: string; name: string; people?: number };
 
 const STEPS = ["The code", "The reward", "Who and where", "Check it"] as const;
 
@@ -151,16 +152,15 @@ export function NewCodeWizard({
   /** The whole code, said as one sentence. */
   const summary = useMemo(() => {
     const who = SEGMENTS[draft.segment] ?? "Anyone";
-    const where = draft.city
-      ? ` in ${cities.find((c) => c.slug === draft.city)?.name ?? draft.city}`
-      : "";
+    // The field holds the city name itself now, not a slug into a table.
+    const where = draft.city.trim() ? ` in ${draft.city.trim()}` : "";
     const cap = draft.maxUses.trim()
       ? `the first ${draft.maxUses} people`
       : "anybody, with no limit";
     const expiry = draft.days.trim() ? ` It stops working in ${draft.days} days.` : "";
 
     return `${who}${where} can redeem ${draft.code.trim() || "this code"} for ${draft.value} ${reward.unit} — ${cap}.${expiry}`;
-  }, [draft, cities, reward]);
+  }, [draft, reward]);
 
   return createPortal(
     <div
@@ -299,20 +299,12 @@ export function NewCodeWizard({
                   <Field
                     id="city"
                     label="Where"
-                    hint="Only people in that city can redeem it."
+                    hint="Only people in that city can redeem it. Leave empty for everywhere."
                   >
-                    <Select
+                    <CityField
                       value={draft.city}
                       onChange={(v) => set("city", v)}
-                      options={[
-                        { value: "", label: "Everywhere" },
-                        ...cities.map((city) => ({
-                          value: city.slug,
-                          label: city.name,
-                          hint: city.live ? undefined : "not launched yet",
-                        })),
-                      ]}
-                      className="w-full"
+                      cities={cities}
                     />
                   </Field>
 
@@ -453,5 +445,240 @@ function Field({
       <p className="text-[0.8rem] leading-relaxed text-muted-foreground">{hint}</p>
       {children}
     </div>
+  );
+}
+
+/**
+ * Picking a city, spelled the way the app spells it.
+ *
+ * Two problems with a plain text box. The city on a promo code is
+ * compared to profiles.city as lowercase text, so "Bengaluru" and
+ * "Bangalore" are the same place and two different codes — one of which
+ * silently reaches nobody. And a typo is invisible: the code saves, the
+ * list shows it, and it simply never matches.
+ *
+ * So the suggestions come from Google, restricted to localities, which
+ * is the same lookup the app uses when it fills in somebody's city.
+ * Asking the same source is what makes the two strings match.
+ *
+ * The cities members are already in are shown first and need no call —
+ * those are both the likeliest choice and the only ones known to have
+ * anybody in them.
+ */
+function CityField({
+  value,
+  onChange,
+  cities,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  cities: City[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [found, setFound] = useState<{
+    query: string;
+    list: { id: string; name: string; region: string }[];
+  }>({ query: "", list: [] });
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState<DOMRect | null>(null);
+
+  // Measured on open and re-measured while the wizard body scrolls, or
+  // the fixed list detaches from the field it belongs to.
+  useLayoutEffect(() => {
+    if (!open) return;
+
+    const measure = () => {
+      const rect = rootRef.current?.getBoundingClientRect();
+      if (rect) setBox(rect);
+    };
+
+    measure();
+    window.addEventListener("scroll", measure, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", measure, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [open]);
+
+  const query = value.trim();
+
+  /*
+   * Debounced, because Google is charged per call and an undebounced
+   * field bills one for every keystroke.
+   */
+  useEffect(() => {
+    if (query.length < 2) return;
+
+    let alive = true;
+
+    const timer = window.setTimeout(async () => {
+      const { data } = await adminFetch<{
+        cities: { id: string; name: string; region: string }[];
+      }>(`/api/city-search?q=${encodeURIComponent(query)}`);
+
+      // Stamped with the query it answers, so a slow reply for an
+      // earlier query cannot overwrite a newer one.
+      if (alive) setFound({ query, list: data?.cities ?? [] });
+    }, 350);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [query]);
+
+  /*
+   * Results are kept only while they answer the current query.
+   *
+   * Derived rather than cleared inside the effect: setting state on
+   * every keystroke to blank a list is a render loop waiting to happen,
+   * and "are these suggestions still for what I typed" is a display
+   * question anyway. It also makes the loading state honest — we are
+   * looking whenever the answer we hold is for an older query.
+   */
+  const fresh = found.query === query ? found.list : [];
+  const looking = query.length >= 2 && found.query !== query;
+
+  // Members' own cities, filtered as you type. These are free.
+  const mine = query
+    ? cities.filter((city) => city.name.toLowerCase().includes(query.toLowerCase()))
+    : cities;
+
+  // Google may return a city already in the list above; showing it twice
+  // reads as a bug rather than as two sources agreeing.
+  const known = new Set(mine.map((city) => city.name.toLowerCase()));
+  const extra = fresh.filter((city) => !known.has(city.name.toLowerCase()));
+
+  const pick = (name: string) => {
+    onChange(name);
+    setOpen(false);
+  };
+
+  // How many members this scoping would actually reach. Compared the way
+  // redeem_promo() compares it: lowercase, exact.
+  const reaches = query
+    ? (cities.find((city) => city.name.toLowerCase() === query.toLowerCase())?.people ?? 0)
+    : 0;
+
+  return (
+    <div ref={rootRef} className="relative">
+      <Input
+        id="city"
+        value={value}
+        onChange={(event) => {
+          onChange(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        // Delayed so a click on a suggestion lands before the list goes.
+        onBlur={() => window.setTimeout(() => setOpen(false), 150)}
+        placeholder="Everywhere"
+        autoComplete="off"
+      />
+
+      {/*
+        Portalled, for the same reason Select is.
+
+        The wizard body scrolls and the wizard itself is
+        overflow-hidden, so a list positioned inside it is clipped at
+        the first of those two edges it reaches. Rendering to <body> at
+        the trigger's measured position escapes both — and z-[400] puts
+        it above the z-[300] modal rather than behind it.
+      */}
+      {open && box && (mine.length > 0 || extra.length > 0 || looking) && createPortal(
+        <div
+          style={{
+            position: "fixed",
+            top: box.bottom + 6,
+            left: box.left,
+            minWidth: box.width,
+            maxHeight: Math.max(160, window.innerHeight - box.bottom - 24),
+          }}
+          className="z-[400] overflow-auto rounded-lg border border-foreground/10 bg-card py-1 shadow-lg">
+          {mine.length > 0 && (
+            <>
+              <p className="px-3 py-1 text-[0.75rem] font-medium text-muted-foreground">
+                Where your members are
+              </p>
+              {mine.map((city) => (
+                <Suggestion
+                  key={city.slug}
+                  name={city.name}
+                  note={
+                    typeof city.people === "number"
+                      ? `${city.people} ${city.people === 1 ? "member" : "members"}`
+                      : undefined
+                  }
+                  onPick={() => pick(city.name)}
+                />
+              ))}
+            </>
+          )}
+
+          {extra.length > 0 && (
+            <>
+              <p className="px-3 py-1 text-[0.75rem] font-medium text-muted-foreground">
+                Everywhere else — nobody there yet
+              </p>
+              {extra.map((city) => (
+                <Suggestion
+                  key={city.id}
+                  name={city.name}
+                  note={city.region}
+                  onPick={() => pick(city.name)}
+                />
+              ))}
+            </>
+          )}
+
+          {looking && extra.length === 0 && (
+            <p className="px-3 py-1.5 text-[0.86rem] text-muted-foreground">Searching…</p>
+          )}
+        </div>,
+        document.body,
+      )}
+
+      {/*
+        The one mistake this field exists to prevent.
+
+        A code is matched against profiles.city as text, and Google does
+        not always agree with what members typed — it calls Mohali
+        "Sahibzada Ajit Singh Nagar". Picking that spelling saves a code
+        that looks correct in the list and reaches nobody, with nothing
+        anywhere to say why. Said plainly rather than blocked: scoping to
+        a city you are about to launch in is legitimate.
+      */}
+      {!open && reaches === 0 && query.length > 1 && (
+        <p className="mt-1.5 text-[0.8rem] leading-relaxed text-warning">
+          No members have {query} as their city, so nobody can redeem this yet. Check the
+          spelling matches what the app saved for them.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Suggestion({
+  name,
+  note,
+  onPick,
+}: {
+  name: string;
+  note?: string;
+  onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      // Stops the input blurring before the click registers.
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onPick}
+      className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[0.92rem] hover:bg-foreground/[0.04]"
+    >
+      <span>{name}</span>
+      {note && <span className="shrink-0 text-[0.8rem] text-muted-foreground">{note}</span>}
+    </button>
   );
 }

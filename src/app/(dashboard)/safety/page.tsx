@@ -113,20 +113,31 @@ export default function SafetyPage() {
   );
 }
 
-type View = "queue" | "reports" | "patterns" | "tickets" | "verification" | "dailies";
+type View = "reports" | "patterns" | "tickets" | "verification" | "dailies";
 
 const VIEWS: { value: View; label: string }[] = [
-  { value: "queue", label: "Waiting" },
   { value: "reports", label: "Reports" },
-  { value: "patterns", label: "Patterns" },
-  { value: "tickets", label: "Tickets" },
   { value: "verification", label: "Verification" },
   { value: "dailies", label: "Today's posts" },
+  { value: "tickets", label: "Tickets" },
+  { value: "patterns", label: "Patterns" },
 ];
 
+/*
+ * "Waiting" was a sixth view, and it showed the same reports as this
+ * one — /api/moderation filtered to open, beside /api/reports filtered
+ * to open. Two tabs, one queue, two different sets of buttons over it:
+ * the Waiting version demanded a written reason before it would act,
+ * this one did not. Whichever tab you happened to open decided whether
+ * the audit trail got an explanation.
+ *
+ * They are one view now, with the deciding tool on top and the log
+ * under it, so a decision and its history are the same screen.
+ */
+const MOVED: Record<string, View> = { queue: "reports" };
+
 const BLURB: Record<View, string> = {
-  reports: "Everything reported, and what was decided.",
-  queue: "Reports waiting for a decision. Clear this daily.",
+  reports: "Reports waiting for a decision, and everything already decided.",
   patterns: "Scam messages and dodgy links the app watches for.",
   tickets: "Support messages from members, and the replies sent back.",
   verification: "Members proving they match their photos. Selfies are never kept.",
@@ -137,10 +148,17 @@ function SafetyView() {
   const confirm = useConfirm();
   const searchParams = useSearchParams();
   const [view, setView] = useState<View>(() => {
-    const asked = searchParams.get("view");
-    return asked === "queue" || asked === "patterns" || asked === "tickets"
-      ? asked
-      : "reports";
+    /*
+     * Checked against the list rather than against three names.
+     *
+     * This tested for "queue", "patterns" and "tickets" only, so
+     * ?view=verification and ?view=dailies both fell through to
+     * reports — two of the six views were unreachable by link, and the
+     * command palette links to both.
+     */
+    const asked = searchParams.get("view") ?? "";
+    if (VIEWS.some((entry) => entry.value === asked)) return asked as View;
+    return MOVED[asked] ?? "reports";
   });
   const askReason = useAskReason();
   const toast = useToast();
@@ -315,7 +333,6 @@ function SafetyView() {
 
       <Explainer>{BLURB[view]}</Explainer>
 
-      {view === "queue" && <QueuePanel />}
       {view === "patterns" && <SafetyRulesPanel />}
       {view === "tickets" && <TicketsPanel />}
       {view === "verification" && <VerificationPanel />}
@@ -323,6 +340,25 @@ function SafetyView() {
 
       {view === "reports" && (
         <>
+          {/*
+            The deciding tool first, the history under it.
+
+            This is where a moderator actually works: the queue refuses
+            to act without a written reason, which is the only thing
+            that explains a suspension to whoever reads the audit trail
+            months later. The log below is the same reports with their
+            outcomes — useful for looking something up, but not where a
+            decision should be made, because it never asked why.
+          */}
+          <QueuePanel />
+
+          <div className="border-t border-foreground/[0.06] pt-6">
+            <h3 className="text-[0.92rem] font-bold">Everything reported</h3>
+            <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
+              The full history, including what was already decided.
+            </p>
+          </div>
+
 
       <div className="grid gap-4 md:grid-cols-4">
         <Card className="border-destructive/20 bg-destructive/10">

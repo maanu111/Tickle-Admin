@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SwitchRow } from "@/components/ui/switch";
 import {
-  PageHeader,
   PageSkeleton,
   Section,
   SettingList,
@@ -44,47 +43,51 @@ const FIELDS: {
   {
     key: "crossing_radius_m",
     anchor: "crossing-radius",
-    label: "Crossing Radius",
+    label: "How close they must be",
     hint: "How close two people must be for it to count as having crossed paths.",
     unit: "metres",
-    section: "The Gate",
+    section: "What counts",
   },
   {
     key: "max_accuracy_m",
     anchor: "max-accuracy",
-    label: "Worst Usable Fix",
+    label: "How accurate the GPS must be",
     hint: "A GPS reading vaguer than this is thrown away rather than trusted. Keep it well under twice the radius, or you are counting crossings the data cannot show.",
     unit: "metres",
-    section: "The Gate",
+    section: "What counts",
   },
   {
     key: "max_time_gap_min",
     anchor: "time-gap",
-    label: "Same Moment",
+    label: "How close in time",
     hint: "How far apart two readings may be and still count as the same moment. Raise this and people who were there hours apart begin to pair.",
     unit: "minutes",
-    section: "The Gate",
+    section: "What counts",
   },
   {
     key: "ping_retention_hours",
     anchor: "retention",
-    label: "Position Retention",
+    label: "How long locations are kept",
     hint: "How long a posted position is kept before deletion. This is location history — the shortest window that still lets pairing work is the right one.",
     unit: "hours",
     section: "Privacy",
   },
 ];
 
-const SECTIONS = ["The Gate", "Privacy"];
+const SECTIONS = ["What counts", "Privacy"];
 
 /*
  * What each group of settings is for, in words rather than field names.
  *
- *"The Gate" means nothing to anyone who did not write it; the sentence
- * under it is what makes the three numbers beneath it adjustable with
- * any confidence.
+ * The labels were written from the code's side — "The Gate", "Worst
+ * Usable Fix", "Same Moment", "Position Retention". Every one of those
+ * names a thing the developer was thinking about rather than the
+ * question the admin is asking, which is how close, how accurate, how
+ * long. The sentence under each group is what makes the numbers
+ * adjustable with any confidence.
  */
-const SECTION_COPY: Record<string, { title: string; hint: string }> = {"The Gate": {
+const SECTION_COPY: Record<string, { title: string; hint: string }> = {
+  "What counts": {
     title: "What counts as crossing paths",
     hint: "All three have to be true at once. Loosen any of them and more people appear in each other's Paths — including some who were never really near each other.",
   },
@@ -162,16 +165,16 @@ export function PathsPanel() {
 
   return (
     <div className="w-full space-y-4">
-      <PageHeader
-        title="Paths Crossed"
-        description="When two people count as crossing, and how long locations last."
-        actions={
-          <Button onClick={save} disabled={!dirty || saving || loading}>
-            {saving ? "Saving…" : dirty ? "Save changes" :"Saved"}
-          </Button>
-        }
-      />
+      {/*
+        No PageHeader here.
 
+        This panel used to render its own, inside a page that already
+        has one — so the Paths tab showed two stacked titles, "Location"
+        above "Paths Crossed". The page owns the header; this owns the
+        settings. The Save button moved to the bottom, next to the last
+        thing you change rather than at the top before you change
+        anything.
+      */}
       <Explainer>
         Phones quietly report where they are. Every few minutes the server
         compares them, and any two people who were close enough at close
@@ -247,6 +250,20 @@ export function PathsPanel() {
               </p>
             )}
           </Section>
+
+          {/* At the bottom, after the settings rather than above them.
+              Nothing here saves on its own, so the button belongs where
+              you finish rather than where you start. */}
+          <div className="flex items-center gap-3">
+            <Button onClick={save} disabled={!dirty || saving || loading}>
+              {saving ? "Saving…" : "Save changes"}
+            </Button>
+            {dirty && !saving && (
+              <span className="text-[0.86rem] text-muted-foreground">
+                Unsaved changes.
+              </span>
+            )}
+          </div>
         </>
       )}
     </div>

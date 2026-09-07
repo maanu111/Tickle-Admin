@@ -269,7 +269,6 @@ export function JobsPanel() {
                   </td>
                 </tr>
               ))}
-                <Pagination page={page} total={visible.length} onPage={setPage} />
               </>
 
               {!loading && visible.length === 0 && (
@@ -281,6 +280,15 @@ export function JobsPanel() {
               )}
             </tbody>
           </table>
+
+          {/* Outside the table, not inside <tbody>.
+              Pagination renders a <div>, and a div is not valid inside a
+              tbody — the browser hoists it out of the table during parse,
+              so the server HTML and the client tree disagree and React
+              reports a hydration error. */}
+          <div className="px-4 pb-3">
+            <Pagination page={page} total={visible.length} onPage={setPage} />
+          </div>
         </CardContent>
       </Card>
     </div>

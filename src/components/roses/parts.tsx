@@ -42,14 +42,6 @@ export type PlanRow = {
   super_like_rose_cost: number;
 };
 
-export type CityRow = {
-  slug: string;
-  name: string;
-  /** waitlist | founding | live | paused, as the cities screen sets it. */
-  status: string;
-  founding_roses: number;
-};
-
 export type Milestone = {
   id: string;
   key: string;
@@ -123,7 +115,6 @@ export type RosePayload = {
   plans: PlanRow[];
   fairness: Settings;
   heartSettings: Settings;
-  cities: CityRow[];
   milestones: Milestone[];
   missions: Mission[];
   codes: Code[];

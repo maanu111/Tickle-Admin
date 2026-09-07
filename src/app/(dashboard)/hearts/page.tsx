@@ -134,9 +134,20 @@ function HeartsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [tab, setTab] = useState<"hearts" | "sparks" | "hunt" | "settings">(() =>
-    searchParams.get("tab") === "settings" ? "settings" :"hearts",
-  );
+  /*
+   * Checked against all four tabs, not just one.
+   *
+   * This tested only for "settings", so ?tab=hunt and ?tab=sparks both
+   * landed on Hearts — and the command palette links to Heart Hunt by
+   * exactly that URL. The link worked, went to the right page, and
+   * showed the wrong tab, which is the hardest kind of broken to spot.
+   */
+  const [tab, setTab] = useState<"hearts" | "sparks" | "hunt" | "settings">(() => {
+    const asked = searchParams.get("tab") ?? "";
+    return asked === "sparks" || asked === "hunt" || asked === "settings"
+      ? asked
+      : "hearts";
+  });
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {

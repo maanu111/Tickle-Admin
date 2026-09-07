@@ -5,10 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Plus, RefreshCw, ShieldAlert } from "lucide-react";
+import { Plus, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
 import { Select } from "@/components/ui/select";
 import { Pagination, paginate, usePagination } from "@/components/ui/pagination";
 import { useLoadOnMount } from "@/lib/useLoadOnMount";
+import { useConfirm } from "@/components/ui/confirm";
 
 /**
  * Scam patterns and blocked domains.
@@ -47,6 +48,7 @@ type Payload = {
 };
 
 export function SafetyRulesPanel() {
+  const confirm = useConfirm();
   const [data, setData] = useState<Payload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -89,6 +91,40 @@ export function SafetyRulesPanel() {
       setBusy(false);
     },
     [load],
+  );
+
+  /*
+   * Deleting a rule, as opposed to switching it off.
+   *
+   * Off is the right answer for a rule you might want back. Delete is
+   * for one that should never have existed — a bad pattern, a typo —
+   * and without it those accumulate at the bottom of the list forever,
+   * greyed out beside the corrected version.
+   */
+  const remove = useCallback(
+    async (entity: string, id: string, label: string) => {
+      const ok = await confirm({
+        title: `Delete ${label}?`,
+        body: "It stops being checked straight away, and it is gone for good. Switch it off instead if you might want it back.",
+        confirmLabel: "Delete it",
+        tone: "danger",
+      });
+
+      if (!ok) return;
+
+      setBusy(true);
+
+      const { error } = await adminFetch(
+        `/api/safety?entity=${entity}&id=${encodeURIComponent(id)}`,
+        { method: "DELETE" },
+      );
+
+      if (error) setError(error);
+      else await load();
+
+      setBusy(false);
+    },
+    [load, confirm],
   );
 
   const toggle = useCallback(
@@ -270,6 +306,20 @@ export function SafetyRulesPanel() {
                       >
                         {rule.active ? "Retire" :"Restore"}
                       </Button>
+
+                      {/* Retire keeps it in the list, off. Delete is for
+                          one that should not exist at all. */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy}
+                        aria-label={`Delete ${rule.label}`}
+                        title="Delete this pattern"
+                        onClick={() => remove("rule", rule.id, rule.label)}
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
                     </div>
                   ))}
                 </CardContent>
@@ -332,14 +382,30 @@ export function SafetyRulesPanel() {
                   <Badge variant="secondary" className="text-[0.86rem]">
                     {entry.reason}
                   </Badge>
-                  <button
-                    type="button"
-                    onClick={() => toggle("domain", entry.id, !entry.active)}
+                  {/* Was a bare × and +, which said nothing about what
+                      either did — and the × read as "delete" while it
+                      only switched the domain off. */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     disabled={busy}
-                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => toggle("domain", entry.id, !entry.active)}
+                    className="text-[0.86rem]"
                   >
-                    {entry.active ? "×" :"+"}
-                  </button>
+                    {entry.active ? "Allow" : "Block"}
+                  </Button>
+
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy}
+                    aria-label={`Delete ${entry.domain}`}
+                    title="Remove from the list"
+                    onClick={() => remove("domain", entry.id, entry.domain)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
                 </div>
               ))}
                 <Pagination page={page} total={domainRows.length} onPage={setPage} />

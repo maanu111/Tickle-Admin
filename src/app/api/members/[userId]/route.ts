@@ -118,7 +118,9 @@ export async function GET(
       relatedUserIds.size
         ? auth.supabase
             .from("profiles")
-            .select("user_id, name, email, photos, age, gender, is_online")
+            // last_active, not is_online: presence is derived from the
+            // heartbeat now, and the old column is a latch nothing clears.
+            .select("user_id, name, email, photos, age, gender, last_active")
             .in("user_id", Array.from(relatedUserIds))
         : Promise.resolve({ data: [], error: null }),
       matchIds.length

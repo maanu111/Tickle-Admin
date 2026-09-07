@@ -2,30 +2,36 @@
 import { useCallback, useState } from "react";
 import { adminFetch } from "@/lib/adminFetch";
 import { classify, VERDICT_COPY } from "@/lib/placeTypes";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Plus, RefreshCw } from "lucide-react";
 import { Select } from "@/components/ui/select";
-import { Section } from "@/components/ui/page";
-import {
-  Pagination,
-  paginate,
-  usePagination,
-} from "@/components/ui/pagination";
+import { Pagination, paginate, usePagination } from "@/components/ui/pagination";
 import { useLoadOnMount } from "@/lib/useLoadOnMount";
 import { PagedList } from "@/components/ui/paged-list";
+import { useConfirm } from "@/components/ui/confirm";
 
 /**
  * Where hearts may be dropped.
  *
- * The most consequential page in the panel. Allowing a category means
+ * The most consequential screen in the panel. Allowing a category means
  * strangers can be pointed at a place and told somebody is there — fine
  * for a café, not fine for a clinic, a school, or the building somebody
  * lives in.
  *
- * Blocking a venue takes down the hearts already at it. A block that
- * only governed the future would leave the actual problem live.
+ * Blocking takes down the hearts already there. A block that only
+ * governed the future would leave the actual problem live.
+ *
+ * This was five cards in an order nobody chose: capture radius first,
+ * then allowed and blocked categories side by side, then blocked
+ * venues, then a form to add a category — and "Waiting on you", the one
+ * part with anything to decide, last. Three of those cards were about
+ * kinds of place, one was about a single venue, and one was a GPS
+ * setting, with nothing on screen saying which was which.
+ *
+ * It now reads top to bottom in the order the questions actually come
+ * up: what needs deciding, what the standing rules are, exceptions to
+ * them, then the setting almost nobody touches.
  */
 
 type Category = {
@@ -56,9 +62,12 @@ export function VenueRulesPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const [blockPlace, setBlockPlace] = useState("");
   const [blockReason, setBlockReason] = useState("");
+
+  const confirm = useConfirm();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -112,12 +121,9 @@ export function VenueRulesPanel() {
     async (id: string) => {
       setBusy(true);
 
-      const { error } = await adminFetch(
-        `/api/venues?id=${encodeURIComponent(id)}`,
-        {
-          method: "DELETE",
-        },
-      );
+      const { error } = await adminFetch(`/api/venues?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
 
       if (error) setError(error);
       else await load();
@@ -127,34 +133,51 @@ export function VenueRulesPanel() {
     [load],
   );
 
+  /*
+   * Blocking a category is the destructive one.
+   *
+   * It takes down every heart at every venue of that kind, and the old
+   * screen did it on a single click of an unlabelled pill. Allowing is
+   * left immediate: it adds nothing and is trivially reversed.
+   */
+  const blockCategory = useCallback(
+    async (entry: Category) => {
+      const ok = await confirm({
+        title: `Refuse hearts at every ${entry.label.toLowerCase()}?`,
+        body: "Hearts already left at places of this kind come down straight away.",
+        confirmLabel: "Block it",
+        tone: "danger",
+      });
+
+      if (ok) await patch({ id: entry.id, allowed: false });
+    },
+    [confirm, patch],
+  );
+
   const allowed = (data?.categories ?? []).filter((entry) => entry.allowed);
   const blocked = (data?.categories ?? []).filter((entry) => !entry.allowed);
-
   const blockedVenues = data?.blocked ?? [];
+  const waiting = data?.unclassified ?? [];
 
-  // Resets when a filter shortens the list, so filtering while on a
-  // later page cannot leave you looking at an empty one.
   const { page, setPage } = usePagination(blockedVenues.length);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <Button variant="outline" size="icon" onClick={load} disabled={loading}>
-          <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-        </Button>
-      </div>
+    <div className="space-y-8">
+      {error && <p className="text-[0.92rem] text-destructive">{error}</p>}
 
-      {error && (
-        <Card className="border-destructive">
-          <CardContent className="pt-6 text-[0.92rem] text-destructive">
-            {error}
-          </CardContent>
-        </Card>
-      )}
-
-      {(data?.unclassified.length ?? 0) > 0 && (
+      {/*
+        Anything undecided comes first, and only exists while there is
+        something in it. Until somebody decides, hearts at these places
+        are refused — so this is the one part of the screen with a cost
+        to ignoring it.
+      */}
+      {waiting.length > 0 && (
         <CategorySuggestions
-          categories={data?.unclassified ?? []}
+          categories={waiting}
+          busy={busy}
+          // POST, not PATCH: these categories have no row yet — deciding
+          // one is what creates it. PATCH needs an id and would reject
+          // every decision made on this list.
           onDecide={(category, allowed, reason) =>
             add({
               entity: "category",
@@ -164,114 +187,114 @@ export function VenueRulesPanel() {
               reason: allowed ? "" : reason,
             })
           }
-          busy={busy}
         />
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Capture radius</CardTitle>
-          <p className="text-[0.92rem] text-muted-foreground">
-            How close somebody must be, in metres. Phone GPS is off by ten to
-            twenty metres indoors, so too tight a radius fails for people who
-            really are there.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <Input
-            type="number"
-            min={5}
-            max={200}
-            defaultValue={data?.captureRadius ?? 15}
-            disabled={busy}
-            onBlur={(event) => {
-              const next = Number(event.target.value);
-              if (next !== data?.captureRadius)
-                patch({ capture_radius_m: next });
-            }}
-            className="h-9 w-32"
-          />
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Allowed ({allowed.length})
-            </CardTitle>
+      {/* ── The standing rules ─────────────────────────── */}
+      <section className="space-y-3">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h3 className="text-[0.92rem] font-bold">Kinds of place</h3>
             <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
-              Kinds of place where a heart may be left.
+              This decides every venue of that kind at once — every café, every
+              clinic. Press one to move it to the other side.
             </p>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <PagedList
-              items={allowed}
-              perPage={40}
-              className="flex flex-wrap gap-2"
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setAdding((open) => !open)}
+              className="h-9 text-[0.86rem]"
             >
+              <Plus className="mr-1.5 size-3.5" />
+              Add a kind
+            </Button>
+
+            <Button
+              variant="secondary"
+              size="icon"
+              onClick={load}
+              disabled={loading}
+              aria-label="Refresh"
+            >
+              <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+            </Button>
+          </div>
+        </div>
+
+        {adding && (
+          <div className="rounded-xl border border-foreground/[0.06] p-4">
+            <AddCategory
+              busy={busy}
+              onAdd={async (payload) => {
+                await add(payload);
+                setAdding(false);
+              }}
+              onCancel={() => setAdding(false)}
+            />
+          </div>
+        )}
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <RuleColumn
+            title="Hearts allowed"
+            hint="Press one to start refusing hearts there."
+            empty="Nothing is allowed yet."
+            count={allowed.length}
+          >
+            <PagedList items={allowed} perPage={40} className="flex flex-wrap gap-2">
               {(entry) => (
                 <button
                   key={entry.id}
                   type="button"
-                  onClick={() => patch({ id: entry.id, allowed: false })}
+                  onClick={() => blockCategory(entry)}
                   disabled={busy}
-                  title="Block this category"
-                  className="rounded-full border px-3 py-1.5 text-[0.92rem] hover:border-destructive hover:text-destructive"
+                  title={`Stop allowing hearts at every ${entry.label.toLowerCase()}`}
+                  className="rounded-full border border-foreground/[0.12] px-3 py-1.5 text-[0.92rem] transition-colors hover:border-destructive hover:text-destructive"
                 >
                   {entry.label}
                 </button>
               )}
             </PagedList>
-          </CardContent>
-        </Card>
+          </RuleColumn>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">
-              Blocked ({blocked.length})
-            </CardTitle>
-            <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
-              Kinds of place where hearts are refused, and why each one is on
-              the list.
-            </p>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            <PagedList
-              items={blocked}
-              perPage={40}
-              className="flex flex-wrap gap-2"
-            >
+          <RuleColumn
+            title="Hearts refused"
+            hint="Press one to start allowing hearts there."
+            empty="Nothing is blocked."
+            count={blocked.length}
+          >
+            <PagedList items={blocked} perPage={40} className="flex flex-wrap gap-2">
               {(entry) => (
                 <button
                   key={entry.id}
                   type="button"
                   onClick={() => patch({ id: entry.id, allowed: true })}
                   disabled={busy}
-                  title={entry.reason ?? "Allow this category"}
-                  className="rounded-full border border-dashed px-3 py-1.5 text-[0.92rem] text-muted-foreground hover:border-foreground hover:text-foreground"
+                  title={entry.reason ?? `Allow hearts at every ${entry.label.toLowerCase()}`}
+                  className="rounded-full border border-destructive/30 bg-destructive/[0.06] px-3 py-1.5 text-[0.92rem] text-destructive transition-colors hover:border-foreground/25 hover:bg-transparent hover:text-foreground"
                 >
                   {entry.label}
-                  {entry.reason && (
-                    <span className="ml-1.5 text-[0.86rem] opacity-60">
-                      {entry.reason}
-                    </span>
-                  )}
                 </button>
               )}
             </PagedList>
-          </CardContent>
-        </Card>
-      </div>
+          </RuleColumn>
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Blocked venues</CardTitle>
-          <p className="text-[0.92rem] text-muted-foreground">
-            Blocking one removes the hearts already there.
+      {/* ── Exceptions to those rules ──────────────────── */}
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-[0.92rem] font-bold">One-off exceptions</h3>
+          <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
+            A single venue, blocked even though its kind is allowed — one café
+            with a problem, rather than every café. Blocking removes the hearts
+            already there.
           </p>
-        </CardHeader>
-        <CardContent className="space-y-3">
+        </div>
+
+        <div className="space-y-3 rounded-xl border border-foreground/[0.06] p-4">
           <div className="flex flex-wrap gap-2">
             <Select
               value={blockPlace}
@@ -283,13 +306,13 @@ export function VenueRulesPanel() {
                   label: String(place.name),
                 })),
               ]}
-              className="w-[11rem]"
+              className="w-[14rem]"
             />
 
             <Input
               value={blockReason}
               onChange={(event) => setBlockReason(event.target.value)}
-              placeholder="Why"
+              placeholder="Why this one is blocked"
               className="min-w-[200px] flex-1"
             />
 
@@ -297,26 +320,28 @@ export function VenueRulesPanel() {
               variant="destructive"
               disabled={busy || !blockPlace || blockReason.length < 3}
               onClick={() => {
-                add({
-                  entity: "venue",
-                  place_id: blockPlace,
-                  reason: blockReason,
-                });
+                add({ entity: "venue", place_id: blockPlace, reason: blockReason });
                 setBlockPlace("");
                 setBlockReason("");
               }}
+              className="h-9 text-[0.86rem]"
             >
-              <Plus className="mr-1 h-4 w-4" />
-              Block
+              Block this venue
             </Button>
           </div>
 
-          <div className="space-y-1">
-            <>
+          {blockedVenues.length === 0 ? (
+            !loading && (
+              <p className="py-3 text-center text-[0.92rem] text-muted-foreground">
+                No single venues blocked. The rules above are doing all the work.
+              </p>
+            )
+          ) : (
+            <div className="space-y-1">
               {paginate(blockedVenues, page).map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex items-center gap-3 rounded-lg border p-2"
+                  className="flex items-center gap-3 rounded-lg border border-foreground/[0.06] p-2.5"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="text-[0.92rem] font-medium">
@@ -331,112 +356,139 @@ export function VenueRulesPanel() {
                     size="sm"
                     disabled={busy}
                     onClick={() => unblock(entry.id)}
+                    className="text-[0.86rem]"
                   >
                     Unblock
                   </Button>
                 </div>
               ))}
-              <Pagination
-                page={page}
-                total={blockedVenues.length}
-                onPage={setPage}
-              />
-            </>
 
-            {(data?.blocked ?? []).length === 0 && !loading && (
-              <p className="py-4 text-center text-[0.92rem] text-muted-foreground">
-                No venues blocked.
-              </p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+              <Pagination page={page} total={blockedVenues.length} onPage={setPage} />
+            </div>
+          )}
+        </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Add a category</CardTitle>
+      {/* ── The one setting ────────────────────────────── */}
+      <section className="space-y-3">
+        <div>
+          <h3 className="text-[0.92rem] font-bold">How close counts as there</h3>
           <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
-            Blocking a kind of place takes down the hearts already there.
+            How close somebody has to be to a venue before the app lets them drop
+            a heart there. Phone GPS is out by twenty or thirty metres, so set it
+            too small and people standing inside the café are told they are not
+            there; too large and somebody driving past can drop one.
           </p>
-        </CardHeader>
-        <CardContent>
-          <AddCategory onAdd={add} busy={busy} />
-        </CardContent>
-      </Card>
+        </div>
+
+        <CaptureRadius
+          value={data?.captureRadius ?? 0}
+          busy={busy}
+          onSave={(metres) => patch({ capture_radius_m: metres })}
+        />
+      </section>
     </div>
   );
 }
 
-function AddCategory({
-  onAdd,
-  busy,
+/** One side of the allowed/refused pair. */
+function RuleColumn({
+  title,
+  hint,
+  empty,
+  count,
+  children,
 }: {
-  onAdd: (payload: Record<string, unknown>) => void;
-  busy: boolean;
+  title: string;
+  hint: string;
+  empty: string;
+  count: number;
+  children: React.ReactNode;
 }) {
-  const [category, setCategory] = useState("");
-  const [label, setLabel] = useState("");
-  const [allowed, setAllowed] = useState(false);
-  const [reason, setReason] = useState("");
+  return (
+    <div className="rounded-xl border border-foreground/[0.06] p-4">
+      <div className="mb-3">
+        <div className="text-[0.92rem] font-medium">
+          {title} <span className="text-muted-foreground">({count})</span>
+        </div>
+        <p className="text-[0.8rem] leading-relaxed text-muted-foreground">{hint}</p>
+      </div>
+
+      {count === 0 ? (
+        <p className="py-2 text-[0.86rem] text-muted-foreground">{empty}</p>
+      ) : (
+        children
+      )}
+    </div>
+  );
+}
+
+/**
+ * The capture radius, edited rather than typed straight into the table.
+ *
+ * A number input wired directly to a save is a setting you can change by
+ * scrolling over it. This keeps the pending value local until Save.
+ */
+function CaptureRadius({
+  value,
+  busy,
+  onSave,
+}: {
+  value: number;
+  busy: boolean;
+  onSave: (metres: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+
+  // Keyed remount from the parent is not worth it for one field; this
+  // catches the case where a reload brings a different saved value.
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    setDraft(String(value));
+  }
+
+  const parsed = Number(draft);
+  const valid = draft.trim() !== "" && Number.isFinite(parsed) && parsed >= 5 && parsed <= 200;
 
   return (
-    <div className="flex flex-wrap gap-2">
-      <Input
-        value={category}
-        onChange={(event) => setCategory(event.target.value)}
-        placeholder="Google's name for it, e.g. cafe"
-        className="w-56 font-mono text-[0.86rem]"
-      />
-      <Input
-        value={label}
-        onChange={(event) => setLabel(event.target.value)}
-        placeholder="Label"
-        className="w-40"
-      />
-      <Select
-        value={allowed ? "yes" : "no"}
-        onChange={(next) => setAllowed(next === "yes")}
-        options={[
-          { value: "no", label: "Blocked" },
-          { value: "yes", label: "Allowed" },
-        ]}
-        className="w-[9rem]"
-      />
-      {!allowed && (
+    <div className="flex flex-wrap items-end gap-2 rounded-xl border border-foreground/[0.06] p-4">
+      <div>
+        <label htmlFor="capture-radius" className="block text-[0.86rem] font-medium">
+          Metres
+        </label>
+        <p className="mb-1.5 text-[0.8rem] text-muted-foreground">
+          Between 5 and 200. 15 is about the width of a shop — leave it there
+          unless people report hearts not dropping.
+        </p>
         <Input
-          value={reason}
-          onChange={(event) => setReason(event.target.value)}
-          placeholder="Why blocked"
-          className="w-48"
+          id="capture-radius"
+          type="number"
+          inputMode="numeric"
+          min={5}
+          max={200}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          className="w-32"
         />
-      )}
+      </div>
+
       <Button
-        disabled={busy || !category || !label}
-        onClick={() => {
-          onAdd({ entity: "category", category, label, allowed, reason });
-          setCategory("");
-          setLabel("");
-          setReason("");
-        }}
+        onClick={() => onSave(Math.round(parsed))}
+        disabled={busy || !valid || parsed === value}
+        className="h-9 text-[0.86rem]"
       >
-        <Plus className="mr-1 h-4 w-4" />
-        Add
+        {busy ? "Saving" : "Save"}
       </Button>
     </div>
   );
 }
 
-/**"coffee_shop" →"Coffee shop". Google's types are snake_case. */
-function prettyLabel(category: string): string {
-  const words = category.replace(/_/g, "").trim();
-  return words.charAt(0).toUpperCase() + words.slice(1);
-}
-
 /**
- * Categories seen on real places that nobody has ruled on yet.
+ * Kinds of place Google has returned that nobody has ruled on.
  *
- * Each one comes with a recommendation and the reason behind it, because
- * the admin is not expected to remember that `physiotherapist` is a
+ * Ranked riskiest first, with a suggested verdict and the reason for it,
+ * because the person deciding will not know that `physiotherapist` is a
  * medical type or that `lodging` covers both hotels and hostels. Two
  * buttons apply the decision; the reason travels with a block so the
  * next person reading the list knows why it is there.
@@ -463,10 +515,18 @@ function CategorySuggestions({
     });
 
   return (
-    <Section
-      title="Waiting on you"
-      hint="New kinds of place. Hearts are refused until you decide."
-    >
+    <section className="space-y-3 rounded-xl border border-warning/40 bg-warning/[0.04] p-4">
+      <div>
+        <h3 className="text-[0.92rem] font-bold">
+          Waiting on you ({ranked.length})
+        </h3>
+        <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
+          New kinds of place Google has started returning. Hearts are refused at
+          all of them until you decide, so nothing here is urgent — but nothing
+          here is working either.
+        </p>
+      </div>
+
       <div className="divide-y divide-foreground/[0.06]">
         {ranked.map(({ category, rule }) => {
           const copy = VERDICT_COPY[rule.verdict];
@@ -528,6 +588,120 @@ function CategorySuggestions({
           );
         })}
       </div>
-    </Section>
+    </section>
   );
+}
+
+function AddCategory({
+  onAdd,
+  onCancel,
+  busy,
+}: {
+  onAdd: (payload: Record<string, unknown>) => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  const [category, setCategory] = useState("");
+  const [label, setLabel] = useState("");
+  const [allowed, setAllowed] = useState(false);
+  const [reason, setReason] = useState("");
+
+  const ready = category.trim().length > 1 && (allowed || reason.trim().length > 2);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label htmlFor="cat-key" className="block text-[0.86rem] font-medium">
+            Google&rsquo;s name for it
+          </label>
+          <p className="mb-1.5 text-[0.8rem] text-muted-foreground">
+            Exactly as Google writes it, like <code>cafe</code> or{" "}
+            <code>night_club</code>.
+          </p>
+          <Input
+            id="cat-key"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+            className="font-mono text-[0.86rem]"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="cat-label" className="block text-[0.86rem] font-medium">
+            What to call it here
+          </label>
+          <p className="mb-1.5 text-[0.8rem] text-muted-foreground">
+            Left empty, it is tidied up from the name above.
+          </p>
+          <Input
+            id="cat-label"
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+            placeholder={category ? prettyLabel(category) : "Café"}
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <span className="block text-[0.86rem] font-medium">Hearts here?</span>
+          <p className="mb-1.5 text-[0.8rem] text-muted-foreground">
+            Start it blocked if you are unsure.
+          </p>
+          <Select
+            value={allowed ? "yes" : "no"}
+            onChange={(next) => setAllowed(next === "yes")}
+            options={[
+              { value: "no", label: "Refused" },
+              { value: "yes", label: "Allowed" },
+            ]}
+          />
+        </div>
+
+        {!allowed && (
+          <div>
+            <label htmlFor="cat-reason" className="block text-[0.86rem] font-medium">
+              Why it is blocked
+            </label>
+            <p className="mb-1.5 text-[0.8rem] text-muted-foreground">
+              So the next person reading the list knows.
+            </p>
+            <Input
+              id="cat-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Somewhere people live"
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="flex gap-2">
+        <Button
+          disabled={busy || !ready}
+          onClick={() =>
+            onAdd({
+              entity: "category",
+              category: category.trim(),
+              label: label.trim() || prettyLabel(category.trim()),
+              allowed,
+              reason: allowed ? "" : reason.trim(),
+            })
+          }
+          className="h-9 text-[0.86rem]"
+        >
+          {busy ? "Adding" : "Add it"}
+        </Button>
+        <Button variant="ghost" onClick={onCancel} className="h-9 text-[0.86rem]">
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** "night_club" reads as a database value; "Night Club" reads as a place. */
+function prettyLabel(value: string) {
+  return value.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }

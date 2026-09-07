@@ -22,18 +22,32 @@ import { JobsPanel } from "@/components/profile/JobsPanel";
  * stacking three of them makes a screen nobody can find the bottom of.
  */
 
-type Tab = "questions" | "filters" | "jobs";
+type Tab = "questions" | "prompts" | "filters" | "jobs";
 
+/*
+ * "Questions" was the label here and on the Matching screen, for two
+ * different things. These are the fields shown on a profile — work,
+ * height, hometown — which other people read. The matching ones are
+ * never displayed; they feed a score. Same word, opposite purpose, and
+ * no way to tell which screen you wanted.
+ */
 const TABS: { value: Tab; label: string }[] = [
-  { value: "questions", label: "Questions" },
+  { value: "questions", label: "Profile fields" },
+  // Prompts were behind a second row of buttons inside the fields panel,
+  // which put a whole subject two levels down on a page that already had
+  // tabs. One level, four subjects.
+  { value: "prompts", label: "Prompts" },
   { value: "filters", label: "Filters" },
-  { value: "jobs", label: "Jobs" },
+  { value: "jobs", label: "Job list" },
 ];
 
 const BLURB: Record<Tab, string> = {
-  questions: "Every question the app asks. Changes show next time it opens.",
+  questions:
+    "What members fill in about themselves, and what other people see on their profile. Changes show next time the app opens.",
+  prompts:
+    "The openers members answer on their profile, written or spoken. These are read by other people, not scored.",
   filters: "What members can narrow their search by, and which need Premium.",
-  jobs: "The job list members pick from. Retiring one keeps it on profiles that already use it.",
+  jobs: "What members pick from when they say what they do. Retiring one keeps it on profiles that already use it.",
 };
 
 export default function ProfilePage() {
@@ -58,13 +72,14 @@ function ProfileView() {
     <div className="space-y-5">
       <PageHeader
         title="Profile"
-        description="The questions members answer, and how others search those answers."
+        description="What members fill in about themselves, and how others search it."
         actions={<Segmented value={tab} onChange={setTab} options={TABS} />}
       />
 
       <Explainer>{BLURB[tab]}</Explainer>
 
-      {tab === "questions" && <QuestionsPanel />}
+      {tab === "questions" && <QuestionsPanel view="fields" />}
+      {tab === "prompts" && <QuestionsPanel view="prompts" />}
       {tab === "filters" && <FiltersPanel />}
       {tab === "jobs" && <JobsPanel />}
     </div>

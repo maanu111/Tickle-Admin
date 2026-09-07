@@ -310,30 +310,13 @@ export function RoseEarning({ data, patch, busy }: PanelProps) {
         )}
       </Section>
 
-      <Section
-        title="New cities"
-        hint="What early members of a city are given."
-      >
-        <PagedList items={data.cities} variant="settings">
-          {(city) => (
-            <SettingRow
-              key={city.slug}
-              label={city.name}
-              hint={city.status === "live" ? "Live" : city.status}
-              control={
-                <NumberField
-                  value={city.founding_roses}
-                  disabled={busy}
-                  suffix="roses"
-                  onCommit={(value) =>
-                    patch({ field: "founding_roses", value, slug: city.slug })
-                  }
-                />
-              }
-            />
-          )}
-        </PagedList>
-      </Section>
+      {/*
+        "New cities" sat here — a per-city founding grant, set to 50
+        roses on every row. Nothing ever paid it: there is no code that
+        reads founding_roses, and the city screen that framed it was a
+        launch flow the app never asked about. Removed with that screen
+        rather than left as a number somebody could keep tuning.
+      */}
 
       <Section
         title="Codes"

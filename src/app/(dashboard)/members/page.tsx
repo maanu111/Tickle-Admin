@@ -24,6 +24,7 @@ import Link from "next/link";
 import { Pagination, paginate, usePagination } from "@/components/ui/pagination";
 import { PageSkeleton } from "@/components/ui/page";
 import { useLoadOnMount } from "@/lib/useLoadOnMount";
+import { isOnline } from "@/lib/presence";
 import { useLiveTable } from "@/lib/useLiveTable";
 
 type ProfileRow = StrengthFields & {
@@ -37,7 +38,14 @@ type ProfileRow = StrengthFields & {
   search_radius: number | null;
   latitude: number | null;
   longitude: number | null;
-  is_online: boolean | null;
+  /*
+   * No is_online here.
+   *
+   * That column is a latch — written true by a location push and never
+   * cleared by anything — so it read "Online" for accounts that had not
+   * opened the app in days. Presence comes from last_active now, via
+   * lib/presence, matching what the database serves members.
+   */
   last_active: string | null;
   interested_in: string | null;
   suspended_at: string | null;
@@ -126,7 +134,7 @@ function MembersView() {
     // with RLS on, profiles answers a signed-in admin with their own row and
     // nothing else, so a direct query here returns an empty table.
     const { data, error } = await adminTable<ProfileRow>("profiles", {
-      select: "id, user_id, name, email, age, gender, created_at, search_radius, latitude, longitude, is_online, last_active, interested_in, suspended_at, suspended_reason, city, face_verified_at, published_at, " +
+      select: "id, user_id, name, email, age, gender, created_at, search_radius, latitude, longitude, last_active, interested_in, suspended_at, suspended_reason, city, face_verified_at, published_at, " +
         STRENGTH_COLUMNS,
       order: "created_at",
       limit: 5000,
@@ -145,7 +153,9 @@ function MembersView() {
   useLoadOnMount(loadMembers);
 
   const stats = useMemo(() => {
-    const online = members.filter((member) => member.is_online).length;
+    // Derived from the heartbeat rather than the is_online column, which
+    // was a latch nothing ever cleared. See lib/presence.
+    const online = members.filter((member) => isOnline(member.last_active)).length;
     const withLocation = members.filter(
       (member) => member.latitude != null && member.longitude != null,
     ).length;
@@ -185,7 +195,7 @@ function MembersView() {
       const status = facets.status ??"all";
       if (status === "suspended" && !member.suspended_at) return false;
       if (status === "active" && member.suspended_at) return false;
-      if (status === "online" && !member.is_online) return false;
+      if (status === "online" && !isOnline(member.last_active)) return false;
 
       const verified = facets.verified ??"all";
       if (verified === "face" && !member.face_verified_at) return false;
@@ -396,8 +406,13 @@ function MembersView() {
                   </TableCell>
                   <TableCell>
                     {/* Suspended outranks online: someone locked out may still
-                        have an open socket, and"Online" would be the least
-                        useful true thing to say about them. */}
+                        have an open socket, and "Online" would be the least
+                        useful true thing to say about them.
+
+                        Online itself comes from the heartbeat rather than
+                        the is_online column — that was a latch nothing
+                        ever cleared, so accounts read "Online" days after
+                        their last visit. See lib/presence. */}
                     {member.suspended_at ? (
                       <Badge
                         variant="outline"
@@ -408,14 +423,14 @@ function MembersView() {
                       </Badge>
                     ) : (
                       <Badge
-                        variant={member.is_online ? "default" :"secondary"}
+                        variant={isOnline(member.last_active) ? "default" : "secondary"}
                         className={
-                          member.is_online
+                          isOnline(member.last_active)
                             ? "bg-primary text-primary-foreground hover:bg-primary/80"
-                            :""
+                            : ""
                         }
                       >
-                        {member.is_online ? "Online" :"Offline"}
+                        {isOnline(member.last_active) ? "Online" : "Offline"}
                       </Badge>
                     )}
                   </TableCell>

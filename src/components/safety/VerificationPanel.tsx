@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, Check, RefreshCw, ScanFace } from "lucide-react";
+import { AlertTriangle, Check, RefreshCw, ScanFace, X } from "lucide-react";
 import { useLoadOnMount } from "@/lib/useLoadOnMount";
 import { useConfirm } from "@/components/ui/confirm";
 import {
@@ -433,7 +433,18 @@ export function VerificationPanel() {
         </>
       )}
 
-      <LogDetail row={openLog} onClose={() => setOpenLog(null)} />
+      <LogDetail
+        row={openLog}
+        onClose={() => setOpenLog(null)}
+        busy={busy === openLog?.user_id}
+        onDecide={async (userId, approved) => {
+          await override(userId, approved);
+          // Closed after the fact: the row it was showing is stale the
+          // moment the decision lands, and leaving it open invites the
+          // same button being pressed twice.
+          setOpenLog(null);
+        }}
+      />
     </div>
   );
 }
@@ -513,9 +524,13 @@ function Stat({
 function LogDetail({
   row,
   onClose,
+  onDecide,
+  busy,
 }: {
   row: LogRow | null;
   onClose: () => void;
+  onDecide: (userId: string, approved: boolean) => void;
+  busy: boolean;
 }) {
   if (!row) return null;
 
@@ -624,12 +639,49 @@ function LogDetail({
             />
           </dl>
 
-          <Link
-            href={`/members/${row.user_id}`}
-            className="inline-block text-[0.86rem] underline underline-offset-4"
-          >
-            Open their profile
-          </Link>
+          {/*
+            The decision, on the screen that explains it.
+
+            This sheet was read-only: it showed the selfie, the photo it
+            was scored against and the score, and then offered no way to
+            act on any of it. Overriding a check meant leaving, finding
+            the person in Members and doing it there — away from the
+            evidence you had just been looking at.
+
+            Both directions are here because both are real. A machine
+            that says no to somebody who is plainly themselves needs
+            overriding; so does a badge that should not have been given.
+          */}
+          <div className="flex flex-wrap gap-2 border-t border-foreground/[0.06] pt-4">
+            {row.profile?.face_verified_at ? (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => onDecide(row.user_id, false)}
+                className="border-destructive/40 text-[0.86rem] text-destructive"
+              >
+                <X className="mr-2 size-4" />
+                Remove their badge
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => onDecide(row.user_id, true)}
+                className="border-emerald-500/40 text-[0.86rem] text-emerald-600"
+              >
+                <Check className="mr-2 size-4" />
+                Verify them anyway
+              </Button>
+            )}
+
+            <Link
+              href={`/members/${row.user_id}`}
+              className="inline-flex items-center text-[0.86rem] underline underline-offset-4"
+            >
+              Open their profile
+            </Link>
+          </div>
         </div>
       </SheetContent>
     </Sheet>

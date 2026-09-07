@@ -45,7 +45,24 @@ export async function GET(request: NextRequest) {
       auth.supabase.from("referral_milestones").select("*").order("sort_order"),
       auth.supabase.from("referral_awards").select("milestone, referrer_id").limit(50000),
       auth.supabase.from("promo_redemptions").select("promo_id").limit(50000),
-      auth.supabase.from("cities").select("slug, name, status").order("name"),
+      /*
+       * The cities people are actually in.
+       *
+       * This read the `cities` table, which held six metros somebody
+       * seeded once — and not one member is in any of them. A code
+       * scoped from that list would have reached nobody, while the
+       * places members really are (Mohali, Zirakpur, Kharar) were not
+       * offered at all.
+       *
+       * redeem_promo() compares promo_codes.city to profiles.city as
+       * lowercase text and never consults the cities table, so this is
+       * also the only list that matches how a code is actually applied.
+       */
+      auth.supabase
+        .from("profiles")
+        .select("city")
+        .not("city", "is", null)
+        .limit(50000),
       auth.supabase
         .from("fairness_settings")
         .select("referral_daily_cap, referral_total_cap")
@@ -81,9 +98,26 @@ export async function GET(request: NextRequest) {
        * not there fails the whole query — which is why this arrived
        * empty and the city dropdown had nothing in it.
        */
-      cities: ((cities.data ?? []) as { slug: string; name: string; status: string }[])
-        .map((row) => ({ ...row, live: row.status === "launched" }))
-        .sort((a, b) => Number(b.live) - Number(a.live) || a.name.localeCompare(b.name)),
+      /*
+       * Busiest first, with the member count on each.
+       *
+       * A campaign is worth running where people are, so the ordering
+       * is by how many members are there rather than alphabetical — and
+       * the count travels with it so the number is visible at the point
+       * the choice is made.
+       */
+      cities: Object.entries(
+        ((cities.data ?? []) as { city: string | null }[]).reduce<Record<string, number>>(
+          (tally, row) => {
+            const name = (row.city ?? "").trim();
+            if (name) tally[name] = (tally[name] ?? 0) + 1;
+            return tally;
+          },
+          {},
+        ),
+      )
+        .map(([name, people]) => ({ slug: name.toLowerCase(), name, people }))
+        .sort((a, b) => b.people - a.people || a.name.localeCompare(b.name)),
       segments: SEGMENTS,
       referral: {
         awarded: (awards.data ?? []).length,
