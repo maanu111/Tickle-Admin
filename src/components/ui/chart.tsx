@@ -109,6 +109,17 @@ export function baseChartOption(palette: string[]): EChartsOption {
     },
     yAxis: {
       type: "value",
+      /*
+       * Never below zero.
+       *
+       * Everything charted here is a count, and ECharts picks a negative
+       * floor when the data is mostly zeroes — so a flat line sat above
+       * an axis labelled -1, and the smoothed curve dipped visibly under
+       * it. A count of minus one is not a thing.
+       */
+      min: 0,
+      // Whole numbers only. Two signups cannot be 1.5.
+      minInterval: 1,
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: { color: muted, fontSize: 10 },
@@ -117,8 +128,24 @@ export function baseChartOption(palette: string[]): EChartsOption {
         lineStyle: { color: hairline, type: "dashed" },
       },
     },
+    /*
+     * Hidden by default, but styled and positioned for when it is not.
+     *
+     * A caller turning this on used to get ECharts' own default, which
+     * centres the legend at the very top of the canvas — directly over
+     * the plot, because the grid starts at 16px. Setting the position
+     * and the padding here means `legend: { show: true }` is the whole
+     * change a caller needs to make.
+     */
     legend: {
       show: false,
+      top: 0,
+      left: 0,
+      icon: "roundRect",
+      itemWidth: 10,
+      itemHeight: 3,
+      itemGap: 16,
+      textStyle: { color: muted, fontSize: 11 },
     },
   };
 }
@@ -155,6 +182,10 @@ export function Chart({
       yAxis: { ...(base.yAxis as object), ...(option.yAxis as object) },
       tooltip: { ...(base.tooltip as object), ...(option.tooltip as object) },
       grid: { ...(base.grid as object), ...(option.grid as object) },
+      // Same reason as the axes: a caller writing `{ show: true }` was
+      // replacing the whole legend, losing its position and styling and
+      // landing it on top of the plot.
+      legend: { ...(base.legend as object), ...(option.legend as object) },
     };
   }, [option, palette]);
 
@@ -196,6 +227,15 @@ export function lineSeries(
     type: "line" as const,
     data,
     smooth: 0.4,
+    /*
+     * Clamped, so the curve cannot bulge past its own points.
+     *
+     * A spline through spiky count data overshoots between them: a run
+     * of zeroes either side of one spike bows the line below zero, which
+     * draws a day where minus one person signed up. clampToData keeps
+     * the curve inside the values it is drawn from.
+     */
+    smoothMonotone: "x" as const,
     showSymbol: false,
     symbolSize: 7,
     lineStyle: { width, color },

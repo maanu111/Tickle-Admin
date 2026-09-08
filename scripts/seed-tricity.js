@@ -276,7 +276,19 @@ function buildProfile(regionKey, gender, area, portraitBase, takenNames) {
 }
 
 async function main() {
-  const count = Number(process.argv[2] ?? 24);
+  /*
+   * How many of each.
+   *
+   *   node scripts/seed-tricity.js 100/100   → 100 women, 100 men
+   *   node scripts/seed-tricity.js 40        → 20 and 20
+   *
+   * Both halves matter: a deck is built from people looking for each
+   * other, so seeding only women leaves every woman's deck empty.
+   */
+  const arg = String(process.argv[2] ?? "24");
+  const [women, men] = arg.includes("/")
+    ? arg.split("/").map((part) => Math.max(0, Number(part) || 0))
+    : [Math.floor(Number(arg) / 2), Math.ceil(Number(arg) / 2)];
 
   const { data: options } = await db
     .from("profile_field_options")
@@ -292,11 +304,27 @@ async function main() {
 
   PROMPT_QS = prompts.map((p) => p.question);
 
-  console.log(`Seeding ${count} profiles across the tricity.\n`);
+  console.log(`Seeding ${women} women and ${men} men across the tricity.\n`);
 
   const regionKeys = Object.keys(REGIONS);
   const made = [];
-  const usedPortraits = new Set();
+
+  /*
+   * Portrait indices, shuffled and drawn without replacement.
+   *
+   * Each seeded person takes three consecutive portraits so their photos
+   * are plausibly the same face. Drawing from a shuffled pool means no
+   * two people share a starting index, and running out is a clean stop
+   * rather than an infinite search for a free one.
+   *
+   * randomuser.me serves 0-99 per gender, so a hundred each is the
+   * ceiling exactly.
+   */
+  const shuffled = () =>
+    Array.from({ length: 100 }, (_, index) => index).sort(() => Math.random() - 0.5);
+
+  const womenPortraits = shuffled();
+  const menPortraits = shuffled();
 
   // Seeded names already in the database, so a second run does not
   // collide with the first.
@@ -307,21 +335,40 @@ async function main() {
 
   const takenNames = new Set((existing ?? []).map((row) => row.name));
 
-  for (let i = 0; i < count; i++) {
-    /*
-     * Mostly women, because the account testing this is a man looking
-     * for women — a 50/50 split would put half the seeded profiles
-     * somewhere the deck will never show them.
-     */
-    const gender = Math.random() < 0.8 ? "female" : "male";
+  /*
+   * An exact split rather than a coin flip.
+   *
+   * This used to roll 80% women, because the one account testing it was
+   * a man. That is the wrong shape for a real deck — a man swiping sees
+   * only women and a woman sees almost nobody. Both halves are seeded
+   * explicitly so either kind of account has a full deck.
+   *
+   * Passed as "100/100" or a single number, which splits evenly.
+   */
+  const plan = [
+    ...new Array(women).fill("female"),
+    ...new Array(men).fill("male"),
+  ];
+
+  for (let i = 0; i < plan.length; i++) {
+    const gender = plan[i];
     const regionKey = regionKeys[i % regionKeys.length];
     const area = AREAS[i % AREAS.length];
 
-    let base;
-    do {
-      base = intBetween(0, 90);
-    } while (usedPortraits.has(`${gender}:${base}`));
-    usedPortraits.add(`${gender}:${base}`);
+    /*
+     * randomuser.me serves portraits 0-99 per gender, so a hundred of
+     * each is exactly the ceiling. Beyond that the old do/while would
+     * have spun forever looking for an unused index — a seeding script
+     * that hangs rather than saying what is wrong.
+     */
+    const pool = gender === "female" ? womenPortraits : menPortraits;
+
+    if (pool.length === 0) {
+      console.log(`  ${i + 1}. out of ${gender} portraits, stopping`);
+      break;
+    }
+
+    const base = pool.pop();
 
     const profile = buildProfile(regionKey, gender, area, base, takenNames);
     const { portraitBase, ...fields } = profile;

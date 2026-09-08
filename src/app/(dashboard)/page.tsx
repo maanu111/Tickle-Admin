@@ -347,6 +347,10 @@ export default function PulseDashboard() {
 
     return {
       legend: { show: true },
+      // Room made for the legend, which otherwise sits on the plot: the
+      // house grid starts 16px from the top because most charts here
+      // have no legend at all.
+      grid: { top: 34 },
       xAxis: {
         data: days.map((day) =>
           day.toLocaleDateString("en-US", { day: "numeric", month: "short" }),
@@ -411,7 +415,14 @@ export default function PulseDashboard() {
           })),
         },
       ],
-      legend: { show: true, bottom: 0 },
+      /*
+       * Under the ring, not above it.
+       *
+       * top is undone explicitly: the house legend sets it so the
+       * line charts can reserve headroom, and leaving both set makes
+       * ECharts honour the top and ignore the bottom.
+       */
+      legend: { show: true, top: undefined, bottom: 0, left: "center" },
     } as EChartsOption;
   }, [profiles]);
 
@@ -431,8 +442,21 @@ export default function PulseDashboard() {
 
     return {
       grid: { left: 100, right: 24, top: 12, bottom: 12 },
-      xAxis: { type: "value" as const },
-      yAxis: { type: "category" as const, data: ranked.map(([name]) => name) },
+      xAxis: { type: "value" as const, min: 0, minInterval: 1 },
+      /*
+       * min and minInterval explicitly undone here.
+       *
+       * The house yAxis carries them so counts never draw a negative
+       * floor, but this chart is rotated — its y is the category axis,
+       * where a min of 0 means "start at the first category" and can
+       * drop labels. They move to the x axis, which is the value one.
+       */
+      yAxis: {
+        type: "category" as const,
+        data: ranked.map(([name]) => name),
+        min: undefined,
+        minInterval: undefined,
+      },
       series: [
         {
           type: "bar" as const,
