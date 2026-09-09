@@ -21,8 +21,18 @@ const SETTINGS: Record<string, { min: number; max: number }> = {
   // The sender's percentage of a save. The platform keeps the rest.
   save_sender_share: { min: 0, max: 100 },
   voice_max_seconds: { min: 10, max: 600 },
-  // Minutes, converted to an interval on the way in.
+  // Minutes, converted to an interval on the way in. Zero switches the
+  // action off rather than making it unlimited.
   edit_window_minutes: { min: 0, max: 120 },
+  /*
+   * Unsending gets a wider ceiling than editing — a day rather than two
+   * hours.
+   *
+   * They are different acts. Editing fixes a typo, which is noticed at
+   * once; unsending is for something that should not have been sent,
+   * which is often realised much later.
+   */
+  unsend_window_minutes: { min: 0, max: 1440 },
 };
 
 export async function GET(request: NextRequest) {
@@ -87,6 +97,8 @@ export async function PATCH(request: NextRequest) {
 
       if (key === "edit_window_minutes") {
         update.edit_window = `${Math.round(value)} minutes`;
+      } else if (key === "unsend_window_minutes") {
+        update.unsend_window = `${Math.round(value)} minutes`;
       } else {
         update[key] = Math.round(value);
       }

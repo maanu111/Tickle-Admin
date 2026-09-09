@@ -95,6 +95,11 @@ export function QueuePanel() {
 
   useLoadOnMount(load);
 
+  // A moderator sits on this screen waiting for work to arrive. Without
+  // this the queue is whatever it was when the page opened, and a report
+  // filed a minute ago is invisible until somebody thinks to refresh.
+  useLiveTable(["reports", "content_flags"], load);
+
   const act = useCallback(
     async (reportId: string, action: string) => {
       const reason = reasons[reportId]?.trim() ??"";

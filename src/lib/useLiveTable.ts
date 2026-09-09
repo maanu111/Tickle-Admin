@@ -34,9 +34,18 @@ export function useLiveTable(
    * The loader lives in a ref so a page can pass an inline function
    * without tearing the subscription down and rebuilding it on every
    * render — which would drop events in the gap.
+   *
+   * The write happens in an effect, not during render. A render can be
+   * started and thrown away, and under StrictMode every render runs
+   * twice; assigning here during render would let a discarded pass
+   * leave its loader behind, so a change event would reload using the
+   * filter state of a render that never committed.
    */
   const loadRef = useRef(load);
-  loadRef.current = load;
+
+  useEffect(() => {
+    loadRef.current = load;
+  }, [load]);
 
   const list = Array.isArray(tables) ? tables : [tables];
   const key = list.join(",");

@@ -145,7 +145,21 @@ async function main() {
         // Explicit: the column defaults to 'pending', which is a match
         // nobody has opened and which expires on a countdown.
         state: "open",
-        expires_at: null,
+        /*
+         * Left to the trigger, not passed as null.
+         *
+         * Passing null here did nothing for a long time: the BEFORE
+         * INSERT trigger guarded with "IF NEW.expires_at IS NOT NULL
+         * THEN RETURN", so an explicit null fell straight through and
+         * got stamped with 72 hours anyway — and because the row was
+         * already 'open', the trigger that clears the deadline on the
+         * first message (which only fires on 'pending') never touched
+         * it. Every seeded conversation carried a permanent "52h left"
+         * banner that no message could dismiss.
+         *
+         * 071 makes the trigger skip any row that is not pending, so
+         * saying nothing here is now the correct and only thing to say.
+         */
         opened_at: matchedAt.toISOString(),
         created_at: matchedAt.toISOString(),
       })

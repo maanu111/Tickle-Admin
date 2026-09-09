@@ -152,6 +152,10 @@ function MembersView() {
 
   useLoadOnMount(loadMembers);
 
+  // New signups and suspensions both land in profiles, so the list stays
+  // current without anyone reaching for refresh.
+  useLiveTable("profiles", loadMembers);
+
   const stats = useMemo(() => {
     // Derived from the heartbeat rather than the is_online column, which
     // was a latch nothing ever cleared. See lib/presence.

@@ -289,6 +289,18 @@ export default function PulseDashboard() {
 
   useLoadOnMount(loadPulse);
 
+  /*
+   * The live feed, kept live.
+   *
+   * `messages` is deliberately not subscribed even though the pulse
+   * counts it. This loader runs eight queries, two of which pull 5000
+   * rows, and messages is the busiest table in the app — a room full of
+   * people chatting would retrigger all eight continuously. The other
+   * tables move at human pace, and a message count that lags until the
+   * next match or like is a fair trade for not hammering the database.
+   */
+  useLiveTable(["profiles", "matches", "likes", "passes", "dailies"], loadPulse);
+
   const stats = useMemo(() => {
     const today = startOfDay(new Date());
     const activeToday = profiles.filter((profile) =>

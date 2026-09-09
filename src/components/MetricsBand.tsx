@@ -99,6 +99,14 @@ export function MetricsBand() {
 
   useLoadOnMount(load);
 
+  // Counts at the top of the dashboard. Stale numbers here are the
+  // quietest kind of wrong — nothing looks broken, the figures are just
+  // from whenever the page was opened.
+  useLiveTable(
+    ["profiles", "reports", "support_tickets", "purchase_attempts"],
+    load,
+  );
+
   if (error) {
     return <p className="text-[0.92rem] text-destructive">{error}</p>;
   }

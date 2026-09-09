@@ -35,6 +35,7 @@ type Settings = {
   save_sender_share: number;
   voice_max_seconds: number;
   edit_window: string;
+  unsend_window: string;
 };
 
 type RetentionOption = {
@@ -220,7 +221,7 @@ export default function MessagingPage() {
                 <CardTitle className="text-base">What members can send</CardTitle>
                 <p className="text-[0.86rem] leading-relaxed text-muted-foreground">
                   How long a voice note can run, how long somebody has to fix a
-                  typo, and how quickly they can send.
+                  typo or take a message back, and how quickly they can send.
                 </p>
               </CardHeader>
               <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -233,9 +234,16 @@ export default function MessagingPage() {
                 />
                 <Field
                   label="Edit window"
-                  hint="How many minutes someone has to fix a typo after sending."
+                  hint="How many minutes someone has to fix a typo after sending. Set it to 0 to turn editing off — the Edit option stops appearing."
                   value={minutesOf(settings.edit_window)}
                   onCommit={(value) => patch({ edit_window_minutes: value })}
+                  disabled={busy}
+                />
+                <Field
+                  label="Unsend window"
+                  hint="How many minutes someone has to take a message back. Up to a day. Set it to 0 to turn unsending off. A message the other person paid to save can never be unsent, whatever this says."
+                  value={minutesOf(settings.unsend_window, 60)}
+                  onCommit={(value) => patch({ unsend_window_minutes: value })}
                   disabled={busy}
                 />
 
@@ -501,9 +509,27 @@ function Field({
   );
 }
 
-/** Postgres hands intervals back as"00:10:00". Only minutes matter here. */
-function minutesOf(interval: string): number {
-  const match = /^(\d+):(\d+):/.exec(interval ?? "");
-  if (!match) return 10;
-  return Number(match[1]) * 60 + Number(match[2]);
+/**
+ * Postgres hands intervals back as "00:10:00", and anything of a day or
+ * more as "1 day 00:00:00". Only whole minutes matter here.
+ *
+ * The day part is not optional to handle: the unsend window goes up to
+ * 1440 minutes, so saving the maximum and reloading the page would
+ * otherwise read "1 day 00:00:00", fail the clock-only pattern, and
+ * show the fallback instead of the value just saved.
+ *
+ * The fallback is a parameter rather than a fixed 10, because the two
+ * settings that use this have different defaults.
+ */
+function minutesOf(interval: string, fallback = 10): number {
+  const days = /(\d+)\s+day/.exec(interval ?? "");
+  const clock = /(\d+):(\d+):/.exec(interval ?? "");
+
+  if (!clock) return fallback;
+
+  return (
+    (days ? Number(days[1]) * 1440 : 0) +
+    Number(clock[1]) * 60 +
+    Number(clock[2])
+  );
 }

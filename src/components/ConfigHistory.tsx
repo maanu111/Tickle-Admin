@@ -66,6 +66,11 @@ export function ConfigHistory() {
 
   useLoadOnMount(load);
 
+  // Two admins changing settings at once should each see the other's
+  // entry appear, rather than both editing against a history that stops
+  // at the moment they opened the page.
+  useLiveTable("config_history", load);
+
   const undo = useCallback(
     async (entry: Entry) => {
       const summary = Object.entries(entry.changes)
